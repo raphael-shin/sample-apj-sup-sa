@@ -67,3 +67,5 @@ secrets.yaml
 
 # Misc
 SLIDES.md
+CLAUDE.md
+.claude/

@@ -96,7 +96,7 @@ resource "aws_security_group" "efs" {
 ################################################################################
 
 resource "aws_efs_mount_target" "ml_data" {
-  for_each = toset(var.private_subnet_ids)
+  for_each = { for idx, id in var.private_subnet_ids : idx => id }
 
   file_system_id  = aws_efs_file_system.ml_data.id
   subnet_id       = each.value
