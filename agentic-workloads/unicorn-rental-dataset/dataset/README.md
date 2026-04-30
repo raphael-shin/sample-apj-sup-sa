@@ -104,6 +104,10 @@ dataset/
 - **[user-story.md](docs/user-story.md)** - User stories for Rental Admin and Staff roles
 
 
+## License
+
+This dataset is licensed under the CC0 1.0 Universal (CC0-1.0) License. See the [LICENSE](LICENSE) file for details.
+
 ## Testing
 
 ```bash
