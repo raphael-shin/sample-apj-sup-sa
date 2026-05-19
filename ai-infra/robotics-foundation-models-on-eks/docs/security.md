@@ -4,7 +4,13 @@ The reference defaults favor private networking, scoped identity, and encrypted 
 
 ## Defaults
 
-- EKS endpoint is private-only unless `cluster_endpoint_public_access_cidrs` is set.
+- The Terraform module keeps the EKS endpoint private-only unless
+  `cluster_endpoint_public_access_cidrs` is set. The Quick Start
+  `scripts/deploy-infra.sh` wrapper sets that allow list to the caller's current
+  public IPv4 `/32` by default so post-Terraform `kubectl` and Helm deployment
+  commands can run outside the VPC. Set
+  `CLUSTER_ENDPOINT_PUBLIC_ACCESS_CIDRS=private` when deploying from a bastion,
+  VPN, or CI network that can reach the private endpoint.
 - Nodes run in private subnets.
 - RDS and ElastiCache are not publicly accessible.
 - S3 public access is blocked.
@@ -29,5 +35,9 @@ Terraform creates runtime credentials and stores them in AWS Secrets Manager. Th
 ## Public Ingress
 
 This repo does not create public application ingress in the baseline. Use `kubectl port-forward` for initial validation. If public UI/API exposure is needed later, add it through a separate reviewed change with TLS, authentication, narrow source ranges, and WAF where appropriate.
+
+Narrow public EKS API endpoint access for deployment administration is not
+application ingress. Keep it limited to administrator `/32` or trusted CIDRs and
+do not use `0.0.0.0/0`.
 
 The optional `infra/ingress` Terraform root creates HTTPS access for the OSMO admin UI through AWS Load Balancer Controller, ACM, Route 53, and an ALB-backed Kubernetes Ingress. It requires a non-empty `allowed_cidrs` list and rejects `0.0.0.0/0`; keep this allow list limited to trusted administrator networks.

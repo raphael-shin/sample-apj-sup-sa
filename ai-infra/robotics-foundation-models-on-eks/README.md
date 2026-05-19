@@ -9,6 +9,9 @@ This sample owns the AWS side of the stack: a secure EKS landing zone, GPU capac
 ### AWS Infrastructure
 
 - Current standard-support Amazon EKS baseline on private subnets.
+- EKS API access remains private-capable; the Quick Start deploy wrapper opens
+  the public API endpoint only to the caller's current IPv4 `/32` so follow-up
+  `kubectl` and Helm deployment commands can run outside the VPC.
 - AWS-native backing services for OSMO: Amazon RDS PostgreSQL, Amazon ElastiCache for Redis, Amazon S3, Amazon ECR, AWS KMS, and IRSA.
 - Karpenter GPU NodePools for On-Demand G7e and G6e instances with private subnet placement, IMDSv2, encrypted gp3 root volumes, and a pinned EKS AL2023 NVIDIA AMI.
 - NVIDIA GPU Operator installed from a pinned Helm chart with driver/toolkit installation disabled for the EKS NVIDIA AMI.
@@ -74,6 +77,24 @@ infra/kubernetes/deploy-efa-device-plugin.sh
 infra/kubernetes/deploy-osmo.sh
 infra/kubernetes/validate-platform.sh
 examples/run-workflow.sh
+```
+
+By default, `scripts/deploy-infra.sh` sets
+`cluster_endpoint_public_access_cidrs` to the caller's current public IPv4
+`/32`. This keeps the EKS API endpoint reachable for the subsequent
+`deploy-karpenter.sh`, GPU Operator, EFA plugin, OSMO, and validation commands
+when the deployer is outside the VPC. To keep the endpoint private-only, run the
+wrapper from a network path that can reach the private endpoint and set:
+
+```bash
+CLUSTER_ENDPOINT_PUBLIC_ACCESS_CIDRS=private scripts/deploy-infra.sh
+```
+
+To use a fixed administrator allow list instead of auto-detection:
+
+```bash
+CLUSTER_ENDPOINT_PUBLIC_ACCESS_CIDRS=203.0.113.10/32,198.51.100.7/32 \
+  scripts/deploy-infra.sh
 ```
 
 The Karpenter wrapper creates GPU NodePools for the reference G7e OSMO platform

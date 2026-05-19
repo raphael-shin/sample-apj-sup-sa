@@ -9,7 +9,12 @@ Reproducibility is the main design goal of this repository.
 - OSMO is not vendored; upgrades happen through explicit PRs with validation notes.
 - Terraform owns the AWS infrastructure and scripts own the KAI, Karpenter, GPU Operator, EFA device plugin, and OSMO install sequence.
 - The default environment is designed to deploy, validate, run CPU and GPU smoke paths, and destroy cleanly.
-- Public EKS API endpoint access is disabled unless a narrow allow list is explicitly provided.
+- Public EKS API endpoint access is restricted to a narrow allow list. The
+  Quick Start `scripts/deploy-infra.sh` wrapper auto-detects the caller's
+  current public IPv4 and passes it as `/32` so the remaining deployment
+  wrappers can reach the new cluster from outside the VPC. Set
+  `CLUSTER_ENDPOINT_PUBLIC_ACCESS_CIDRS=private` only when the deployment host
+  can reach the private endpoint.
 - The artifact S3 bucket and workload ECR repository default to force delete so ephemeral validation accounts can destroy after smoke tests.
 - The runtime secret recovery window defaults to `0` for clean ephemeral teardown; set `secret_recovery_window_in_days` higher for shared or long-lived environments.
 
@@ -41,6 +46,9 @@ scripts/destroy.sh
 The clean-account test must verify:
 
 - Terraform fmt and validate succeed.
+- The EKS API endpoint is reachable from the deployment host after
+  `scripts/deploy-infra.sh`, either through the wrapper's caller `/32` public
+  endpoint allow list or through an explicitly private network path.
 - NGC API key input is available before OSMO Helm install.
 - KAI Scheduler installs from the pinned OCI Helm chart and exposes the real `scheduling.run.ai` PodGroup CRD.
 - Karpenter installs from the pinned OCI Helm chart and exposes the G7e and G6e NodePools and EC2NodeClasses.
