@@ -22,5 +22,6 @@ Wrappers:
 - `validate-platform.sh`: validates the deployed Kubernetes and OSMO platform.
 - `prewarm-gpu-node.sh`: creates a temporary GPU workload pod so OSMO can see
   G7e capacity before submitting GPU workflows.
-- `wait-gpu-node-cleanup.sh`: removes the prewarm pod and verifies Karpenter
-  cleaned up GPU nodes.
+- `wait-gpu-node-cleanup.sh`: removes the prewarm pod, deletes residual OSMO
+  workflow pods after the workflow has completed, and verifies Karpenter cleaned
+  up GPU nodes.

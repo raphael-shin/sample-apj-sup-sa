@@ -61,7 +61,7 @@ The clean-account test must verify:
 - Backend pods do not enter `CrashLoopBackOff`.
 - The CPU-only smoke workflow completes.
 - The GPU smoke path prewarms a G7e node for OSMO resource validation, submits `examples/smoke/gpu-workflow/workflow.yaml`, verifies the GPU workflow runs `nvidia-smi`, and confirms cleanup removes the G7e NodeClaim and node.
-- After GPU workflows complete, `infra/kubernetes/wait-gpu-node-cleanup.sh` removes completed GPU Operator validator pods if present and confirms that no G7e NodeClaims or nodes remain for the Karpenter GPU NodePool.
+- After GPU workflows complete, `infra/kubernetes/wait-gpu-node-cleanup.sh` removes completed GPU Operator validator pods and residual OSMO workflow pods if present, then confirms that no G7e NodeClaims or nodes remain for the Karpenter GPU NodePool.
 - Destroy completes, or retained resources are documented.
 
 ## EFA Validation Modes

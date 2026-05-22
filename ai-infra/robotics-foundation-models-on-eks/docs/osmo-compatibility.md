@@ -40,7 +40,7 @@ For constrained local experiments, set `OSMO_INSTALL_KAI=false` before `infra/ku
 
 OSMO 6.2 validates workflow resources against capacity already visible to the OSMO backend. Karpenter, by design, creates GPU nodes only after Kubernetes sees pending pods. That means an OSMO workflow that requires a large GPU node can be rejected before Karpenter has a chance to provision the node.
 
-This reference works around that boundary by using `infra/kubernetes/prewarm-gpu-node.sh` before OSMO-submitted GPU workflows. The prewarm pod is not part of the training pipeline; it only makes the target GPU platform visible so OSMO resource validation can pass. After the workflow completes, `infra/kubernetes/wait-gpu-node-cleanup.sh` deletes the prewarm pod and verifies that Karpenter removes empty GPU nodes.
+This reference works around that boundary by using `infra/kubernetes/prewarm-gpu-node.sh` before OSMO-submitted GPU workflows. The prewarm pod is not part of the training pipeline; it only makes the target GPU platform visible so OSMO resource validation can pass. After the workflow completes, `infra/kubernetes/wait-gpu-node-cleanup.sh` deletes the prewarm pod, removes residual OSMO workflow pods on the target GPU nodes, and verifies that Karpenter removes empty GPU nodes.
 
 A useful upstream OSMO contribution would be an autoscaler-aware capacity provider or deferred resource validation mode. For Karpenter, OSMO could inspect `NodePool` and `EC2NodeClass` constraints, model provisionable instance capacity, and submit the Kubernetes workload so Karpenter can provision nodes from the resulting pending pods. That would remove the need for prewarm pods while preserving OSMO's resource validation model.
 

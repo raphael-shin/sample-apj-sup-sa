@@ -11,6 +11,7 @@ KARPENTER_NODEPOOL_NAME="${KARPENTER_NODEPOOL_NAME:-$(version_value karpenter_no
 GPU_OPERATOR_NAMESPACE="${GPU_OPERATOR_NAMESPACE:-$(version_value gpu_operator_namespace)}"
 GPU_CLEANUP_DELETE_PREWARM="${GPU_CLEANUP_DELETE_PREWARM:-true}"
 GPU_CLEANUP_DELETE_COMPLETED_VALIDATORS="${GPU_CLEANUP_DELETE_COMPLETED_VALIDATORS:-true}"
+GPU_CLEANUP_DELETE_WORKFLOW_PODS="${GPU_CLEANUP_DELETE_WORKFLOW_PODS:-true}"
 GPU_CLEANUP_DELETE_EMPTY_NODECLAIMS="${GPU_CLEANUP_DELETE_EMPTY_NODECLAIMS:-true}"
 GPU_CLEANUP_PREWARM_POD_NAME="${GPU_CLEANUP_PREWARM_POD_NAME:-aws-osmo-gpu-prewarm}"
 GPU_CLEANUP_TIMEOUT_SECONDS="${GPU_CLEANUP_TIMEOUT_SECONDS:-1800}"
@@ -37,11 +38,30 @@ node_has_blocking_pods() {
     --field-selector "spec.nodeName=${node_name}" \
     -o json | jq -e '
       any(.items[];
+        ((.metadata.deletionTimestamp // "") == "") and
         (.status.phase != "Succeeded" and .status.phase != "Failed") and
         (((.metadata.ownerReferences // []) | map(.kind) | index("DaemonSet")) == null) and
         ((.metadata.annotations["kubernetes.io/config.mirror"] // "") == "")
       )
     ' >/dev/null
+}
+
+delete_residual_workflow_pods() {
+  local node_name="$1"
+  kubectl -n "${OSMO_WORKLOAD_NAMESPACE}" get pods \
+    --field-selector "spec.nodeName=${node_name}" \
+    -o json | jq -r --arg prewarm "${GPU_CLEANUP_PREWARM_POD_NAME}" '
+      .items[] |
+      select(.metadata.name != $prewarm) |
+      select((.metadata.deletionTimestamp // "") == "") |
+      .metadata.name
+    ' |
+    while IFS= read -r pod_name; do
+      [[ -n "${pod_name}" ]] || continue
+      log "deleting residual OSMO workflow pod ${OSMO_WORKLOAD_NAMESPACE}/${pod_name}"
+      kubectl -n "${OSMO_WORKLOAD_NAMESPACE}" delete pod "${pod_name}" \
+        --wait=false --ignore-not-found >/dev/null || true
+    done
 }
 
 delete_empty_nodeclaims() {
@@ -50,6 +70,9 @@ delete_empty_nodeclaims() {
     while IFS=$'\t' read -r nodeclaim_name node_name deletion_timestamp; do
       [[ -n "${nodeclaim_name}" ]] || continue
       [[ -z "${deletion_timestamp}" ]] || continue
+      if [[ -n "${node_name}" && "${GPU_CLEANUP_DELETE_WORKFLOW_PODS}" == "true" ]]; then
+        delete_residual_workflow_pods "${node_name}"
+      fi
       if [[ -n "${node_name}" ]] && node_has_blocking_pods "${node_name}"; then
         log "waiting for GPU workload pods to leave ${node_name}"
         continue
