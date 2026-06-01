@@ -100,8 +100,8 @@ state.
      Bedrock response.
 
 The 1P leg sends the original Anthropic-native request body (with `model` set to
-`anthropic_model_id` and `stream` forced to `false`), then records usage parsed from the
-1P response.
+`anthropic_model_id` and `stream` forced to `false`) and returns the response. 1P usage is
+intentionally not recorded (see Cost behavior).
 
 ### Streaming (`POST /v1/messages`, `stream:true`)
 
@@ -119,9 +119,8 @@ before the stream has started:
 
 The 1P streaming leg (`anthropic_client.messages_stream`) issues a `stream:true` request to
 1P and yields the raw Anthropic-native SSE bytes to the client. Because 1P already emits
-Anthropic-native SSE, the bytes pass through unchanged — no re-encoding. Usage is collected
-off a side buffer (`_AnthropicStreamUsage`) that parses `message_start` / `message_delta`
-events and is recorded when the stream ends.
+Anthropic-native SSE, the bytes pass through unchanged — no re-encoding. 1P usage is
+intentionally not recorded (see Cost behavior), so no usage is parsed off the stream.
 
 The streaming 1P client checks the upstream HTTP status **before yielding the first chunk**.
 A non-2xx response raises (`AnthropicThrottlingError` on 429, otherwise `AnthropicError`)
@@ -175,8 +174,18 @@ once the breaker is open all subsequent requests skip Bedrock immediately.
 ## Cost behavior
 
 While the breaker is closed and Bedrock is healthy, all traffic uses Bedrock (pre-purchased
-capacity). 1P is billed only for requests served during an open/half-open window — i.e.
-during an actual outage. Once Bedrock recovers and the breaker closes, 1P spend stops.
+capacity). 1P is billed by Anthropic only for requests served during an open/half-open
+window — i.e. during an actual outage. Once Bedrock recovers and the breaker closes, 1P
+spend stops.
+
+**Usage metering is Bedrock-only.** Requests served by Bedrock are recorded in
+`usage_events` with cost computed from `model_pricing`, and they decrement budgets. Requests
+served by the 1P fallback are intentionally **not** recorded: no `usage_events` row, no cost
+estimate, and no budget decrement. Rationale: 1P spend already appears on the Anthropic
+console, so the gateway only meters Bedrock spend and avoids double counting (and avoids
+charging 1P tokens at Bedrock prices). The practical consequence is that during a Bedrock
+outage, requests routed to 1P are not subject to the gateway's budget limits. The fact that a
+fallback occurred is still visible in the logs (`falling back to anthropic 1p ...`).
 
 ## Networking
 

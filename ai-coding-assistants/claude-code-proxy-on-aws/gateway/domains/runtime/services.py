@@ -13,7 +13,6 @@ from gateway.domains.runtime.types import (
     MessageResponse,
     ModelData,
     ModelListResponse,
-    UsageInfo,
 )
 from gateway.domains.usage.metrics import MetricsService
 from shared.exceptions import (
@@ -29,65 +28,6 @@ from shared.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class _AnthropicStreamUsage:
-    """Accumulate usage from a passthrough Anthropic SSE byte stream."""
-
-    def __init__(self) -> None:
-        self._buffer = ""
-        self._input_tokens = 0
-        self._usage = UsageInfo()
-
-    @staticmethod
-    def _coerce(value: object) -> int:
-        if isinstance(value, bool):
-            return 0
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
-        return 0
-
-    def feed(self, chunk: bytes) -> None:
-        self._buffer += chunk.decode(errors="ignore")
-        while "\n\n" in self._buffer:
-            event, self._buffer = self._buffer.split("\n\n", 1)
-            for line in event.splitlines():
-                if not line.startswith("data:"):
-                    continue
-                payload = line[len("data:"):].strip()
-                if not payload or payload == "[DONE]":
-                    continue
-                try:
-                    data = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-                self._handle_event(data)
-
-    def _handle_event(self, data: dict[str, object]) -> None:
-        event_type = data.get("type")
-        if event_type == "message_start":
-            message = data.get("message")
-            usage = message.get("usage") if isinstance(message, dict) else None
-            if isinstance(usage, dict):
-                self._input_tokens = self._coerce(usage.get("input_tokens"))
-        elif event_type == "message_delta":
-            usage = data.get("usage")
-            if not isinstance(usage, dict):
-                return
-            delta = data.get("delta")
-            stop_reason = delta.get("stop_reason") if isinstance(delta, dict) else None
-            self._usage = UsageInfo(
-                input_tokens=self._coerce(usage.get("input_tokens")) or self._input_tokens,
-                output_tokens=self._coerce(usage.get("output_tokens")),
-                cached_read_tokens=self._coerce(usage.get("cache_read_input_tokens")),
-                cached_write_tokens=self._coerce(usage.get("cache_creation_input_tokens")),
-                stop_reason=stop_reason if isinstance(stop_reason, str) else None,
-            )
-
-    def usage(self) -> UsageInfo:
-        return self._usage
 
 
 class GatewayService:
@@ -171,30 +111,6 @@ class GatewayService:
             self._serialize_payload(payload),
         )
 
-    @staticmethod
-    def _extract_usage_from_anthropic(response: dict[str, object]) -> UsageInfo:
-        usage = response.get("usage")
-        if not isinstance(usage, dict):
-            return UsageInfo()
-
-        def _coerce(value: object) -> int:
-            if isinstance(value, bool):
-                return 0
-            if isinstance(value, int):
-                return value
-            if isinstance(value, str) and value.isdigit():
-                return int(value)
-            return 0
-
-        stop_reason = response.get("stop_reason")
-        return UsageInfo(
-            input_tokens=_coerce(usage.get("input_tokens")),
-            output_tokens=_coerce(usage.get("output_tokens")),
-            cached_read_tokens=_coerce(usage.get("cache_read_input_tokens")),
-            cached_write_tokens=_coerce(usage.get("cache_creation_input_tokens")),
-            stop_reason=stop_reason if isinstance(stop_reason, str) else None,
-        )
-
     def _can_fallback_to_anthropic(self, context: PolicyContext) -> bool:
         if self._anthropic_client is None:
             return False
@@ -219,10 +135,11 @@ class GatewayService:
             context.resolved_model.anthropic_model_id,
         )
         self._log_bedrock_response_payload(request_id, anthropic_response)
-        message = MessageResponse.model_validate(anthropic_response)
-        usage = self._extract_usage_from_anthropic(anthropic_response)
-        await self._usage_service.record_success(context, usage)
-        return message
+        # 1P fallback usage is intentionally NOT recorded: cost and token usage
+        # land on the Anthropic console, and this gateway only tracks Bedrock
+        # spend. Skipping record_success also means budget is not decremented for
+        # requests served by 1P during a Bedrock outage.
+        return MessageResponse.model_validate(anthropic_response)
 
     async def _stream_anthropic_fallback(
         self,
@@ -231,11 +148,12 @@ class GatewayService:
         request_id: str,
         reason: str,
     ):
-        """Yield 1P SSE bytes unchanged while collecting usage off the stream.
+        """Yield 1P SSE bytes unchanged.
 
         1P emits Anthropic-native SSE, so the bytes pass through to the client
-        untouched. A side buffer parses message_start/message_delta events to
-        record usage once the stream ends.
+        untouched. 1P fallback usage is intentionally NOT recorded (cost lands on
+        the Anthropic console; this gateway only tracks Bedrock spend), so no
+        usage is parsed off the stream and budget is not decremented.
         """
         logger.warning(
             "falling back to anthropic 1p stream request_id=%s reason=%s",
@@ -248,18 +166,10 @@ class GatewayService:
         )
 
         async def _generator():
-            collector = _AnthropicStreamUsage()
             try:
                 async for chunk in chunks:
-                    collector.feed(chunk)
                     yield chunk
             finally:
-                try:
-                    await self._usage_service.record_success(
-                        context, collector.usage()
-                    )
-                except Exception:
-                    logger.exception("Usage persistence failed after 1p stream fallback")
                 if self._metrics:
                     self._metrics.emit_active_request_end(context)
 

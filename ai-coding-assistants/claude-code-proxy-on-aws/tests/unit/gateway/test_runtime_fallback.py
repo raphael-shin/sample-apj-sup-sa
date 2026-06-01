@@ -131,12 +131,9 @@ async def test_bedrock_failure_falls_back_to_anthropic_when_configured() -> None
     assert model_id == "claude-sonnet-4-5-20250929"
     assert body["model"] == "claude-sonnet-4-6"
     assert response.id == "msg_test"
-    usage_service.record_success.assert_awaited_once()
-    recorded_usage = usage_service.record_success.await_args.args[1]
-    assert recorded_usage.input_tokens == 11
-    assert recorded_usage.output_tokens == 22
-    assert recorded_usage.cached_read_tokens == 3
-    assert recorded_usage.cached_write_tokens == 4
+    # 1P fallback usage is intentionally not recorded: cost is tracked on the
+    # Anthropic console, and the gateway only meters Bedrock spend.
+    usage_service.record_success.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -405,11 +402,9 @@ async def test_stream_bedrock_failure_falls_back_to_anthropic_stream() -> None:
     anthropic_client.messages_stream.assert_awaited_once()
     assert b"message_start" in received
     assert b"message_stop" in received
-    usage_service.record_success.assert_awaited_once()
-    recorded = usage_service.record_success.await_args.args[1]
-    assert recorded.input_tokens == 7
-    assert recorded.output_tokens == 5
-    assert recorded.stop_reason == "end_turn"
+    # 1P fallback usage is intentionally not recorded; the SSE bytes pass through
+    # to the client but no usage/cost is metered for the 1P leg.
+    usage_service.record_success.assert_not_awaited()
 
 
 @pytest.mark.asyncio
