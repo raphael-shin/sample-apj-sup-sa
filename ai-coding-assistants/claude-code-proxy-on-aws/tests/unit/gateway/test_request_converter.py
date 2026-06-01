@@ -852,6 +852,50 @@ def test_convert_request_upgrades_legacy_thinking_to_adaptive_for_46_models() ->
     assert converted["additionalModelRequestFields"] == {"thinking": {"type": "adaptive"}}
 
 
+def test_convert_request_keeps_adaptive_thinking_for_opus_48() -> None:
+    converter = AnthropicToBedrockConverter()
+    request = MessageRequest(
+        model="claude-opus-4-8",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": "hello"}],
+        thinking={"type": "adaptive"},
+    )
+
+    converted = converter.convert_request(
+        request,
+        _resolved_model(
+            "global.anthropic.claude-opus-4-8",
+            family="claude-opus",
+            canonical_name="claude-opus-4-8",
+        ),
+        "none",
+    )
+
+    assert converted["additionalModelRequestFields"] == {"thinking": {"type": "adaptive"}}
+
+
+def test_convert_request_upgrades_legacy_thinking_to_adaptive_for_opus_48() -> None:
+    converter = AnthropicToBedrockConverter()
+    request = MessageRequest(
+        model="claude-opus-4-8",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": "hello"}],
+        thinking={"type": "enabled", "budget_tokens": 2048},
+    )
+
+    converted = converter.convert_request(
+        request,
+        _resolved_model(
+            "global.anthropic.claude-opus-4-8",
+            family="claude-opus",
+            canonical_name="claude-opus-4-8",
+        ),
+        "none",
+    )
+
+    assert converted["additionalModelRequestFields"] == {"thinking": {"type": "adaptive"}}
+
+
 def test_convert_request_normalizes_camel_case_budget_tokens() -> None:
     converter = AnthropicToBedrockConverter()
     request = MessageRequest(

@@ -253,6 +253,25 @@ aws sso login --profile ${AWS_PROFILE}
 
 The deployment script interactively guides you through region selection, Identity Store configuration, ACM certificate, and CDK bootstrap. After deployment, the API Gateway ID and ALB DNS are output to `cdk-outputs.json`. Use those values to fill in the Step 0 environment variables.
 
+### 1.1. Populate Anthropic API Key (For 1P Fallback)
+
+The Anthropic API key used for Bedrock-to-1P fallback is stored in AWS Secrets Manager. CDK creates an empty placeholder; populate it with your real key after deployment.
+
+```bash
+ANTHROPIC_API_KEY_SECRET_ARN=$(jq -r '.[] | .AnthropicApiKeySecretArn // empty' cdk-outputs.json | head -n1)
+
+aws secretsmanager put-secret-value \
+  --secret-id "$ANTHROPIC_API_KEY_SECRET_ARN" \
+  --secret-string '{"api_key":"sk-ant-..."}' \
+  --region "$AWS_REGION"
+```
+
+The gateway accepts either a JSON envelope (`{"api_key":"..."}`) or a raw key string. The value is read on first fallback request and cached in memory; the running ECS task does not need a restart for the key to take effect.
+
+To enable fallback for a model, set `anthropic_model_id` when registering the model in Step 3 below (e.g. `"anthropic_model_id": "claude-sonnet-4-5-20250929"`). Models without `anthropic_model_id` skip fallback even when Bedrock fails.
+
+Fallback covers both non-streaming and streaming requests. A per-region in-memory circuit breaker trips on Bedrock provider/throttle failures and routes subsequent requests straight to 1P until it half-opens (default `BEDROCK_BREAKER_OPEN_SECONDS=300`) and a probe succeeds, after which traffic returns to Bedrock automatically. For streaming, fallback only applies while the stream has not started yet (the `ConverseStream` call fails before the first chunk, or the breaker is already open); once SSE bytes have been sent to the client, a mid-stream Bedrock disconnect cannot fall over to 1P and must be retried by the client. Request-shape, auth, and policy rejections (`ValidationException`, `AccessDeniedException`, ...) do not trigger fallback because the same payload would fail at 1P too.
+
 ### 2. Sync Identity Center Users
 
 Synchronize IAM Identity Center users to the gateway DB.
@@ -439,6 +458,7 @@ Once configuration is complete, run Claude Code to verify the gateway is working
 | [docs/API_SPEC.md](./docs/API_SPEC.md) | API specification |
 | [docs/DATA_MODEL.md](./docs/DATA_MODEL.md) | Data model |
 | [docs/RUNTIME_TRANSLATION.md](./docs/RUNTIME_TRANSLATION.md) | Anthropic ↔ Bedrock translation rules |
+| [docs/BEDROCK_FALLBACK.md](./docs/BEDROCK_FALLBACK.md) | Bedrock → Anthropic 1P fallback mechanism |
 
 ## License
 
