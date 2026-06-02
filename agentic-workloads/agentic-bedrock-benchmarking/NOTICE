@@ -1,0 +1,24 @@
+BedrockBench
+Copyright 2024 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+This product includes the following third-party software:
+
+---
+
+Streamlit (Apache-2.0)
+https://github.com/streamlit/streamlit
+
+boto3 (Apache-2.0)
+https://github.com/boto/boto3
+
+NumPy (BSD-3-Clause)
+https://numpy.org
+
+pypdf (BSD-3-Clause)
+https://github.com/py-pdf/pypdf
+
+PyJWT (MIT)
+https://github.com/jpadilla/pyjwt
+
+cryptography (Apache-2.0 / BSD)
+https://github.com/pyca/cryptography
