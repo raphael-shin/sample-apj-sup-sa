@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from gateway.domains.runtime.circuit_breaker import BreakerState, CircuitBreaker
 
 
