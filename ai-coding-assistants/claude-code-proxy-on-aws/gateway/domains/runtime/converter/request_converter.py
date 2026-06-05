@@ -16,7 +16,9 @@ MIN_REQUEST_MAX_TOKENS_FOR_FIXED_THINKING = MIN_BEDROCK_THINKING_BUDGET_TOKENS +
 FIXED_THINKING_RESERVED_OUTPUT_TOKENS = 1
 DEFAULT_FIXED_THINKING_BUDGET_TOKENS = MIN_BEDROCK_THINKING_BUDGET_TOKENS
 MAX_CACHE_POINTS_PER_REQUEST = 4
-ADAPTIVE_THINKING_MODEL_FAMILIES = frozenset({"claude-opus-4-6", "claude-sonnet-4-6"})
+ADAPTIVE_THINKING_MODEL_FAMILIES = frozenset(
+    {"claude-opus-4-6", "claude-opus-4-8", "claude-sonnet-4-6"}
+)
 BEDROCK_TOOL_RESULT_CONTENT_KEYS = {
     "document",
     "image",
@@ -62,9 +64,15 @@ class AnthropicToBedrockConverter:
                 effective_tool_choice
             )
 
+        # Bedrock Converse only accepts user/assistant turns; any system-role
+        # message in the conversation (e.g. Claude Code injecting skill context
+        # mid-conversation) must be lifted into the top-level system field, or
+        # Bedrock rejects the request (conversation must end with a user turn).
+        conversation, inline_system = self._split_system_messages(anthropic_req.messages)
+
         request = {
             "modelId": resolved_model.bedrock_model_id,
-            "messages": self.convert_messages(anthropic_req.messages, cache_policy, cache_counter),
+            "messages": self.convert_messages(conversation, cache_policy, cache_counter),
             "inferenceConfig": {
                 "maxTokens": effective_max_tokens,
             },
@@ -75,14 +83,19 @@ class AnthropicToBedrockConverter:
             request["inferenceConfig"]["topP"] = anthropic_req.top_p
         if anthropic_req.stop_sequences:
             request["inferenceConfig"]["stopSequences"] = anthropic_req.stop_sequences
+        converted_system: list[dict[str, Any]] = []
         if anthropic_req.system is not None:
             converted_system = self.convert_system(
                 anthropic_req.system,
                 cache_policy,
                 cache_counter,
             )
-            if converted_system:
-                request["system"] = converted_system
+        for system_message in inline_system:
+            converted_system.extend(
+                self.convert_system(system_message.content, cache_policy, cache_counter)
+            )
+        if converted_system:
+            request["system"] = converted_system
         if anthropic_req.tools:
             request["toolConfig"] = self.convert_tools(
                 anthropic_req.tools, effective_tool_choice, cache_policy, cache_counter
@@ -106,6 +119,25 @@ class AnthropicToBedrockConverter:
                 return []
             return [{"text": system}]
         return self._convert_blocks(system, cache_policy, cache_counter)
+
+    @staticmethod
+    def _split_system_messages(
+        messages: list[Any],
+    ) -> tuple[list[Any], list[Any]]:
+        """Separate system-role messages from the user/assistant conversation.
+
+        Bedrock Converse rejects system-role entries inside `messages`; they are
+        returned separately so the caller can fold them into the top-level
+        system field. Order is preserved for both lists.
+        """
+        conversation: list[Any] = []
+        system_messages: list[Any] = []
+        for message in messages:
+            if getattr(message, "role", None) == "system":
+                system_messages.append(message)
+            else:
+                conversation.append(message)
+        return conversation, system_messages
 
     def convert_messages(
         self,
