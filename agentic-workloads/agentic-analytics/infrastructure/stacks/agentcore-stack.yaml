@@ -73,7 +73,6 @@ Parameters:
 
   CubeApiSecret:
     Type: String
-    Default: cubejs-workshop-secret-2024
     NoEcho: true
     Description: Shared secret for Cube API authentication
 
