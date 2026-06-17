@@ -2,7 +2,7 @@
   "database": "timely_unicorn",
   "connection": {
     "type": "postgresql",
-    "host": "agentic-analytics-cluster.cluster-c7agmam40f74.ap-southeast-2.rds.amazonaws.com",
+    "host": "agentic-analytics-cluster.cluster-xxxxxxxxxxxx.ap-southeast-2.rds.amazonaws.com",
     "port": 5432,
     "database": "timely_unicorn"
   },

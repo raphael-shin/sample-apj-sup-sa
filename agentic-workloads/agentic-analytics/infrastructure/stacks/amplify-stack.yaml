@@ -98,6 +98,11 @@ Resources:
                 Action:
                   - s3:GetObject
                 Resource: !Sub arn:aws:s3:::${ArtifactsBucket}/*
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                Resource: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
 
   #============================================================================
   # Amplify Hosting Lambda Function
@@ -131,6 +136,8 @@ Resources:
       BranchName: !Ref BranchName
       ArtifactsBucket: !Ref ArtifactsBucket
       ArtifactsKey: !Ref UIBuildKey
+      CognitoUserPoolId: !Ref CognitoUserPoolId
+      CognitoUserClientId: !Ref CognitoUserClientId
       EnvironmentVariables:
         REACT_APP_AWS_REGION: !Ref AWSRegion
         REACT_APP_COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId

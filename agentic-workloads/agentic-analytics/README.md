@@ -78,6 +78,40 @@ Workshop content is in the [`workshop/`](workshop/) directory. For hands-on inst
 
 The workshop uses CloudFormation to pre-provision infrastructure (Aurora, Glue, Bedrock KB, Cognito, EC2 Code Editor). Participants then build the agent layer progressively using code overlays with TODO placeholders. See [`workshop/contentspec.yaml`](workshop/contentspec.yaml) for the Workshop Studio configuration.
 
+## Demo Deployment (Full Automation)
+
+Demo mode deploys everything including AgentCore Gateway and Amplify UI. Uses the same packaging script as Workshop mode, only `DeployMode` differs.
+
+```bash
+# 1. Create S3 bucket for artifacts
+aws s3 mb s3://your-artifacts-bucket --region us-west-2
+
+# 2. Upload deployment artifacts (demo is the default mode — packages agent code, datafoundation Lambda, psycopg2 layer, amplify Lambda, and UI build in addition to workshop artifacts)
+cd infrastructure/scripts
+./package_and_upload.sh your-artifacts-bucket
+
+# 3. Deploy demo stack (use the command output from step 2, changing DeployMode to demo and stack name to agentic-analytics-demo)
+aws cloudformation create-stack \
+  --stack-name agentic-analytics-demo \
+  --template-url https://your-artifacts-bucket.s3.us-west-2.amazonaws.com/templates/main-stack.yaml \
+  --parameters \
+      ParameterKey=ArtifactsBucket,ParameterValue=your-artifacts-bucket \
+      ParameterKey=DeployMode,ParameterValue=demo \
+      ParameterKey=DatabaseInitLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=GlueCrawlerLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=BedrockKBLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=AmplifyLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=InterceptorLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=ApiIntegLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=CustomSqlLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=SemanticLayerLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=ObservabilityLambdaKey,ParameterValue=<from-output> \
+      ParameterKey=UIBuildKey,ParameterValue=<from-output> \
+      ParameterKey=AgentCodeS3Key,ParameterValue=agent/agent_code.zip \
+  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+  --region us-west-2
+```
+
 ## Project Structure
 
 ```
