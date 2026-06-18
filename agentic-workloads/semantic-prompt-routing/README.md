@@ -13,6 +13,8 @@ An intelligent router that classifies query complexity and routes to the cheapes
 
 ## Quick Start
 
+This router can use an LLM from Amazon Bedrock or a local LLM from Ollama as the classifier model. The default classifier model is Amazon Nova Micro from Amazon Bedrock. Note that there is a cost associated for using models from Amazon Bedrock, e.g. for Amazon Nova Micro, it is $0.035 per 1M input tokens, and $0.14 per 1M output tokens, in US East (N. Virginia) region. If you want to use Ollama as the classifier instead, just change the classifi_query() function call inside route_and_respond() (in router.py) to classify_query_ollama(). The default model used in Ollama is Llama 3.2.
+
 ### Setup Ollama (if using Ollama as classifier)
 Download and install Ollama: https://ollama.com/download
 To launch a model (e.g. llama3.2), run:

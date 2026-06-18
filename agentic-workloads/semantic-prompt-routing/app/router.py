@@ -302,7 +302,7 @@ class SemanticRouter:
         t0 = time.perf_counter()
 
         # Step 1: Classify query semantics
-        signals = await classify_query(query, conversation_history)
+        signals = await classify_query(query, conversation_history) # change this to classify_query_ollama(query, conversation_history) to use Ollama as the classifier instead
         logger.info(
             "Classification: complexity=%.2f, task=%s, lang=%s",
             signals.complexity_score, signals.task_type, signals.language

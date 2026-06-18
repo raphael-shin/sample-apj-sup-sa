@@ -211,7 +211,6 @@ async def classify_query(
         )
         response = client.invoke_model(
             modelId="amazon.nova-micro-v1:0",
-            # modelId="openai.gpt-oss-20b-1:0",
             contentType="application/json",
             accept="application/json",
             body=body,
