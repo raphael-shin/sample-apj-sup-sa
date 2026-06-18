@@ -94,9 +94,40 @@ Parameters:
     Default: lambdas/observability_setup.zip
     Description: S3 key for observability setup Lambda (use hash-versioned key)
 
+  # ── Voice (optional, additive) ──────────────────────────────────────────────
+  EnableVoice:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Deploy the voice layer (Pipecat pipeline). Demo mode only. Default off.
+  VoiceMode:
+    Type: String
+    Default: agentcore
+    AllowedValues: [agentcore, pipecat-cloud]
+    Description: Where the voice pipeline runs when EnableVoice=true. agentcore = its own AgentCore Runtime (WebRTC+KVS). (laptop is a local-dev path, not a CFN value.)
+  VoiceAgentCodeS3Key:
+    Type: String
+    Default: voice/voice_agent_code.zip
+    Description: S3 key of the voice bot code zip (CodeBuild source for agentcore mode)
+  DeepgramApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Deepgram API key (required when EnableVoice=true)
+  DeepgramVoiceId:
+    Type: String
+    Default: aura-2-apollo-en
+    Description: Deepgram TTS voice id
+
 Conditions:
   IsDemo: !Equals [!Ref DeployMode, 'demo']
   IsWorkshop: !Equals [!Ref DeployMode, 'workshop']
+  # Voice is demo-only and additive. VoiceAgentCore is the CFN-wired mode (the voice
+  # pipeline runs as its own AgentCore Runtime, WebRTC + KVS TURN, no vendor SFU);
+  # pipecat-cloud is managed by its own custom-resource stack
+  # (infrastructure/voice-pcc-cr) deployed separately.
+  VoiceEnabled: !And [!Equals [!Ref DeployMode, 'demo'], !Equals [!Ref EnableVoice, 'true']]
+  VoiceAgentCore: !And [!Condition VoiceEnabled, !Equals [!Ref VoiceMode, 'agentcore']]
 
 Resources:
   #============================================================================
@@ -300,6 +331,40 @@ Resources:
           Value: !Ref EnvironmentName
 
   #============================================================================
+  # Phase 6: Voice (optional, agentcore mode) — the Pipecat pipeline as its OWN
+  # AgentCore Runtime (WebRTC + KVS managed TURN, no vendor SFU). Built before
+  # Amplify so its signaling-proxy URL can be injected into the UI's runtime config.
+  # Reuses the Aurora VPC's private subnets + NAT (VPC NetworkMode is required for
+  # UDP TURN). The pipeline invokes the Strands analytics runtime over Bearer HTTPS.
+  #============================================================================
+  VoiceAgentCoreStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: VoiceAgentCore
+    DependsOn:
+      - CognitoStack
+      - AgentCoreStack
+      - AuroraStack
+    Properties:
+      TemplateURL: !Sub https://${ArtifactsBucket}.s3.${AWS::Region}.amazonaws.com/${ArtifactsPrefix}templates/voice-agentcore-stack.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ArtifactsBucket: !Ref ArtifactsBucket
+        ArtifactsPrefix: !Ref ArtifactsPrefix
+        VoiceAgentCodeS3Key: !Ref VoiceAgentCodeS3Key
+        CognitoUserPoolId: !GetAtt CognitoStack.Outputs.UserPoolId
+        CognitoClientId: !GetAtt CognitoStack.Outputs.UserLoginClientId
+        StrandsAgentRuntimeArn: !GetAtt AgentCoreStack.Outputs.AgentRuntimeArn
+        ChartBucket: !Ref ArtifactsBucket
+        DeepgramApiKey: !Ref DeepgramApiKey
+        DeepgramVoiceId: !Ref DeepgramVoiceId
+        VpcId: !GetAtt AuroraStack.Outputs.VpcId
+        PrivateSubnet1Id: !GetAtt AuroraStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt AuroraStack.Outputs.PrivateSubnet2Id
+      Tags:
+        - Key: Project
+          Value: !Ref EnvironmentName
+
+  #============================================================================
   # Phase 7: Amplify Hosting (Demo mode only)
   #============================================================================
   AmplifyStack:
@@ -319,6 +384,10 @@ Resources:
         CognitoDomain: !GetAtt CognitoStack.Outputs.CognitoDomain
         CognitoIdentityPoolId: !GetAtt CognitoStack.Outputs.IdentityPoolId
         AgentCoreRuntimeEndpoint: !GetAtt AgentCoreStack.Outputs.AgentRuntimeEndpointArn
+        # Empty unless voice (agentcore) is enabled → UI hides the Voice button when blank.
+        # The WebRTC signaling proxy base URL; the SPA POSTs SDP offers / PATCHes ICE
+        # to {this}/api/offer (the proxy forwards to the runtime + unwraps the SSE answer).
+        VoiceSignalingUrl: !If [VoiceAgentCore, !GetAtt VoiceAgentCoreStack.Outputs.VoiceSignalingUrl, '']
         LambdaS3Key: !Sub ${ArtifactsPrefix}${AmplifyLambdaKey}
         UIBuildKey: !Sub ${ArtifactsPrefix}${UIBuildKey}
       Tags:

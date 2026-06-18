@@ -2,38 +2,58 @@
 
 ## Project Overview
 
-AWS Workshop Studio deployable and reference sample for agentic AI self-service analytics on multi-tenant SaaS. Business users ask questions in natural language; a Strands agent selects tools via MCP Gateway, queries Aurora PostgreSQL, and returns formatted insights.
+A deployable demo + workshop for agentic AI self-service analytics. Business users ask questions in natural language — **by text or by voice** — and a Strands agent selects tools via MCP Gateway, queries Aurora PostgreSQL, and returns formatted insights (including **generated charts**).
 
 **Scenario:** Timely-Unicorn — multi-tenant SaaS for unicorn rental businesses. Two tenants (Mythical Unicorns, Mythic Unicorns) plus the platform account.
 
-## Deployment
+**Two ways to ask:**
+- **Text chat** — the React UI invokes AgentCore Runtime directly over HTTPS with the user's Cognito JWT as a Bearer token (the runtime's CustomJWTAuthorizer validates it).
+- **Voice** — a Pipecat pipeline (Deepgram STT → AgentCore → Deepgram TTS) bridges speech to the *same* agent. Text and voice turns in one session share a single AgentCore Memory thread, so context carries across both.
 
-**Workshop mode** (primary): CloudFormation deploys infrastructure (Aurora, Cognito, Glue, Bedrock KB, EC2 Code Editor). Participants deploy AgentCore components manually via workshop steps. CFN `DeployMode=workshop`.
+Both paths invoke the same Strands agent with the same per-user JWT, so RBAC/RLS is identical regardless of modality. A per-request `mode` field (`text` | `voice`) tells the agent how to format its reply (plain markdown vs. a spoken `<speak>` headline + on-screen detail). Charts work in both modes.
+
+## Two Deployment Modes
+
+- **Workshop mode** (primary): Deploys infrastructure only (Aurora, Cognito, Glue, Bedrock KB, EC2 Code Editor). Participants deploy AgentCore components manually. CFN `DeployMode=workshop`.
+- **Demo mode** (under construction): Deploys everything including AgentCore Gateway + Amplify UI. CFN `DeployMode=demo`.
 
 ## Architecture
 
 ```
-User → React UI → AgentCore Runtime (Strands Agent + SOP + Memory)
-                        → MCP Gateway (Cedar Policy + Interceptor)
-                            → PrebakedSQL Lambda (27 tools, DB Views)
-                            → APIInteg Lambda (create_booking)
-                            → CustomSQL Lambda (Glue schema + Bedrock KB RAG)
-                                → Aurora PostgreSQL (RLS by tenant)
+            ┌─ Text: React UI ──────────────────────────────┐
+User asks ──┤                                                 ├─► AgentCore Runtime (Strands Agent + SOP + Memory)
+            └─ Voice: Mic → Pipecat (Deepgram STT/TTS) ──────┘         → MCP Gateway (Cedar Policy + Interceptor)
+                                                                          → PrebakedSQL Lambda (27 tools, DB Views)
+                                                                          → APIInteg Lambda (create_booking)
+                                                                          → CustomSQL Lambda (Glue schema + Bedrock KB RAG)
+                                                                          → CodeInterpreter (matplotlib → S3 → <chart> tag)
+                                                                              → Aurora PostgreSQL (RLS by tenant)
 ```
+
+Both front-ends carry the user's Cognito JWT as `gateway_token` and the SAME app session id as `runtimeSessionId`, so one conversation can interleave text and voice turns against one Memory thread.
+
+### Charts (both modes)
+
+The agent renders charts in an AgentCore **Code Interpreter** sandbox (matplotlib), which uploads the PNG to `s3://<artifacts>/charts/` and prints only the S3 key. The agent emits a short `<chart s3key="charts/….png" />` tag in its output; the **agent's outbound stream loop presigns that key and rewrites the tag to `<chart url="…" />`** before it leaves the runtime. So:
+- The presigned URL is created once, server-side (agent role has `s3:GetObject`); the short S3 key — never the URL — is what lands in Memory.
+- Both consumers receive the identical `<chart url="…" />`: the **voice bot** re-emits it as an RTVI `chart` message; the **text UI** parses it from the stream. Same render path in `ChatPanel.js`.
 
 ## Key Files
 
 | What | Where |
 |------|-------|
 | Main agent | `app/agentcore_strands/unicorn_rental_agent.py` |
-| SOP | `app/agentcore_strands/unicorn_rental_analytics.sop.md` |
+| SOP (one file, mode-conditional) | `app/agentcore_strands/unicorn_rental_analytics.sop.md` |
 | Lambda tools | `app/agentcore_strands/tools/*.py` |
 | Deploy scripts | `app/agentcore_strands/infra/deploy_*.py` |
 | CFN stacks | `infrastructure/stacks/*.yaml` |
 | React UI | `app/ui/` |
+| Voice bot (Pipecat) | `app/voice/bot.py`, `app/voice/analytics_processor.py`, `app/voice/auth.py` |
+| Voice CFN stack | `infrastructure/stacks/voice-agentcore-stack.yaml` (own AgentCore Runtime, WebRTC + KVS TURN, + signaling proxy) |
+| Voice post-deploy (PCC fallback) | `infrastructure/voice-proxy/`, `infrastructure/voice-pcc-cr/`, `infrastructure/scripts/deploy_voice_pcc.sh` |
+| Dataset | `dataset/` (symlink → `../unicorn-rental-dataset`) |
 | Workshop content | `workshop/content/` (Hugo markdown for Workshop Studio) |
 | Workshop overlays | `workshop/code/` (TODO versions for exercises) |
-| Dataset | `dataset/` (symlink → `../unicorn-rental-dataset`) |
 | Project file index | `dev/app-index.json` |
 
 ## Build & Deploy Commands
@@ -59,6 +79,13 @@ python3 guardrails/deploy_guardrail.py   # Bedrock Guardrail
 # UI (dev mode)
 cd app/ui && npm install && npm start    # Port 3001, PUBLIC_URL=/app
 
+# Voice bot — laptop dev (Pipecat pipeline + local UI)
+cd app/voice && uv sync && uv run bot.py --transport daily
+# or: bash infrastructure/scripts/run_voice_laptop.sh
+# Hosted voice: deploy main CFN with EnableVoice=true VoiceMode=agentcore|pipecat-cloud
+# (agentcore = Pipecat on its own AgentCore Runtime, WebRTC+KVS TURN; fast iterate with
+#  deploy_backend.sh --voice-only. pipecat-cloud also needs: deploy_voice_pcc.sh.) See DEPLOYMENT.md.
+
 # Workshop packaging (see skills/workshop-deployment/)
 cd infrastructure/scripts && bash package_for_workshop.sh
 ```
@@ -71,7 +98,13 @@ cd infrastructure/scripts && bash package_for_workshop.sh
 - **Never use global variables for request-scoped state** (prevents cross-tenant leakage on Lambda container reuse)
 - Deploy scripts must be **idempotent**: delete existing Gateway target before creating, always update IAM policies
 - Glue table names are prefixed `{db}_public_` by Crawler — strip prefix in `get_schema_context` so LLM sees real PostgreSQL names
-- Model: `global.anthropic.claude-opus-4-6-v1` (Global CRIS)
+- Model: `global.anthropic.claude-opus-4-8` (Global CRIS)
+
+**Voice + mode conventions:**
+- The agent reads `payload["mode"]` (`text` | `voice`, default `text`) and follows the matching branch of the single SOP's Response Formatting section. There is no separate voice SOP and no `sop_s3_key` file-swap.
+- Voice mode replies lead with exactly one `<speak>…</speak>` block (1–3 spoken sentences, no markup) followed by the full on-screen answer; text mode replies are plain markdown. Never speak tables/SQL/UUIDs.
+- Charts: the agent emits `<chart s3key="…">`; the runtime's stream loop presigns and rewrites to `<chart url="…">` outbound only — keep the URL out of `agent.messages`/Memory.
+- Hosted voice forwards the SIGNED-IN user's own token (per-user RBAC/RLS). There is **no demo identity** in hosted mode; laptop dev may set `ALLOW_DEMO_FALLBACK=true` to mint a token via Cognito ROPC.
 
 ## Workshop Overlay System
 
@@ -83,14 +116,12 @@ cd infrastructure/scripts && bash package_for_workshop.sh
 
 - `config.env` — Runtime config on EC2 (not in git). Generated by CFN, appended by deploy scripts.
 - `config.env.sample` — Template
-- `infrastructure/config/deployment-config.json` — Generated by `init_database.py` (gitignored, not committed)
-- `dev/app-index.json` — Project file index with summaries of every significant file. **Must be updated** when adding new files, renaming files, or making changes that invalidate existing summaries.
+- `dev/app-index.json` — Project file index with summaries of every significant file. **Must be updated** when adding new files, renaming files, or making changes that invalidate existing summaries. Read this first when you need to understand the project structure. If changes don't invalidate existing content, no update needed.
 
 ## Source Control
 
-- **GitHub**: `github.com/aws-samples/sample-apj-sup-sa` (under `agentic-workloads/agentic-analytics/`)
-- **Workshop Studio**: `workshopstudio://ws-content-173b87a9-7267-4478-b7ec-0cd16a7cb520/run-llama-on-aws`
-- **S3 assets**: `s3://ws-assets-us-east-1/173b87a9-7267-4478-b7ec-0cd16a7cb520`
+- **GitHub** (this sample lives under): `aws-samples/sample-apj-sup-sa` → `agentic-workloads/agentic-analytics/`
+- **Workshop Studio**: published from the `workshop/` directory (see `workshop/contentspec.yaml`)
 
 ## Test Users (password: Unicorn123!)
 

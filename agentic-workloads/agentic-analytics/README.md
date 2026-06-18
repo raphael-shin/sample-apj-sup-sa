@@ -1,6 +1,6 @@
 # Agentic Analytics: Self-Service Analytics with Agentic AI on AWS
 
-A reference implementation and [AWS Workshop Studio](https://workshops.aws/) deployable for building AI-powered self-service analytics on multi-tenant SaaS. Business users ask questions in plain English — the AI agent selects the right query, enforces security policies, and returns formatted insights.
+A reference implementation and [AWS Workshop Studio](https://workshops.aws/) deployable for building AI-powered self-service analytics on multi-tenant SaaS. Business users ask questions in plain English — by **text or by voice** — the AI agent selects the right query, enforces security policies, and returns formatted insights, including **generated charts**.
 
 Built with [Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html), [Strands Agents SDK](https://strandsagents.com/latest/), Aurora PostgreSQL, and Cedar policies.
 
@@ -15,14 +15,17 @@ Built with [Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentc
 3. **AgentCore Runtime** hosts a Strands agent that interprets the query and selects the right tool(s)
 4. **MCP Gateway** routes tool calls to Lambda functions, enforcing Cedar RBAC policies and propagating the JWT
 5. **Lambda Tools** execute parameterized SQL against Aurora PostgreSQL, with Row-Level Security filtering data by tenant
-6. **Agent** formats the results and streams them back to the UI
+6. **Agent** formats the results and streams them back to the UI — as text, a markdown table, and/or a generated chart image
+7. **(Optional) Voice** — the same agent answers spoken questions: a Pipecat pipeline (its own AgentCore Runtime, WebRTC + Amazon KVS managed TURN, Deepgram STT/TTS) calls the analytics agent and speaks the answer back
 
 ### Key Components
 
 | Component | Purpose |
 |-----------|---------|
-| **React UI** | Chat interface with streaming responses and SQL approval workflow |
+| **React UI** | Chat interface with streaming responses, SQL approval workflow, rendered charts, and optional voice mode |
 | **AgentCore Runtime** | Hosts the Strands agent with memory, SOP, and guardrails |
+| **Voice Runtime** *(optional)* | A second AgentCore Runtime running the Pipecat voice pipeline (WebRTC + KVS TURN, Deepgram STT/TTS) that invokes the analytics agent |
+| **Chart Code Interpreter** | Sandboxed matplotlib rendering → PNG to S3; the agent returns a short presigned `<chart>` tag (no base64 in the stream) |
 | **MCP Gateway** | Authenticated tool routing with Cedar policy enforcement |
 | **Prebaked SQL Toolset** | 27+ analytics tools backed by database Views |
 | **API Integration Toolset** | Write operations (e.g., create booking) with tenant-scoped inserts |
@@ -71,8 +74,17 @@ This repository is designed as a deployable for **AWS Workshop Studio**. The wor
 | 8 | Guardrails (topic blocking, PII filtering) |
 | 9 | Observability (CloudWatch + X-Ray tracing) |
 | 10 | Evaluation (LLM-as-a-Judge with Strands Evals) |
+| Optional | Semantic layer with Cube Core |
+| Optional | Voice — talk to your data (Pipecat + WebRTC + KVS TURN, no 3rd-party SFU) |
 
 Workshop content is in the [`workshop/`](workshop/) directory. For hands-on instructions, deploy via Workshop Studio or follow the Hugo markdown in `workshop/content/`.
+
+### Voice & charts
+
+Beyond text chat, the agent can **speak** and **draw**:
+
+- **Charts** — when a question calls for a visual, the agent renders a real chart in a sandboxed Code Interpreter, uploads the PNG to S3, and returns a short presigned `<chart>` tag the UI renders. Image bytes never cross the model stream. Works in both text and voice.
+- **Voice** — an optional second AgentCore Runtime hosts a [Pipecat](https://www.pipecat.ai/) pipeline (Deepgram STT/TTS) and connects to the browser over **WebRTC with Amazon Kinesis Video Streams (KVS) managed TURN** — no third-party media vendor. It invokes the *same* analytics agent over the same JWT, so RBAC/RLS and the conversation memory thread are shared across text and voice. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the voice deploy modes.
 
 ### Workshop Deployment
 
@@ -121,10 +133,12 @@ aws cloudformation create-stack \
 │   │   ├── infra/               # Gateway, toolset, and observability deployment
 │   │   ├── policy/              # Cedar policy deployment and pre-token Lambda
 │   │   └── guardrails/          # Bedrock Guardrail deployment
-│   └── ui/                      # React frontend
+│   ├── ui/                      # React frontend (text chat + charts + optional voice)
+│   └── voice/                   # Pipecat voice bot (optional) — runs as its own AgentCore Runtime
 ├── infrastructure/
-│   ├── stacks/                  # CloudFormation templates (nested stacks)
+│   ├── stacks/                  # CloudFormation templates (nested stacks, incl. voice-agentcore-stack.yaml)
 │   ├── custom-resource-lambdas/ # Custom Resource Lambda handlers
+│   ├── voice-proxy/             # JWT start-proxy for the pipecat-cloud voice mode (optional)
 │   └── scripts/                 # Deployment and utility scripts
 ├── workshop/
 │   ├── content/                 # Workshop guide (Steps 0–10)

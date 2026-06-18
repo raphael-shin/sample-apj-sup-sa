@@ -317,11 +317,30 @@ def wait_for_data_source(kb_id, ds_id, timeout=120):
 def start_ingestion(kb_id, ds_id):
     """Start ingestion job for S3 data source."""
     print(f"Starting ingestion job...")
-    
-    response = bedrock_agent.start_ingestion_job(
-        knowledgeBaseId=kb_id,
-        dataSourceId=ds_id
-    )
+
+    # The Aurora RDS Data API (HttpEndpoint) can take a short while to become
+    # usable after the cluster reports 'available'. StartIngestionJob then fails
+    # with ValidationException ("HttpEndpoint is not enabled for resource ...").
+    # Retry with backoff so this transient race doesn't fail the whole deploy.
+    response = None
+    for attempt in range(12):  # ~12 * 15s = 3 min
+        try:
+            response = bedrock_agent.start_ingestion_job(
+                knowledgeBaseId=kb_id,
+                dataSourceId=ds_id
+            )
+            break
+        except Exception as e:
+            msg = str(e)
+            transient = ('HttpEndpoint' in msg or 'is not enabled' in msg
+                         or 'ValidationException' in msg or 'storage configuration' in msg)
+            if transient and attempt < 11:
+                print(f"  Ingestion not ready (attempt {attempt + 1}/12): {msg[:160]} — retrying in 15s")
+                time.sleep(15)
+                continue
+            raise
+    if response is None:
+        raise RuntimeError("start_ingestion_job did not succeed after retries")
     
     job_id = response['ingestionJob']['ingestionJobId']
     status = response['ingestionJob']['status']

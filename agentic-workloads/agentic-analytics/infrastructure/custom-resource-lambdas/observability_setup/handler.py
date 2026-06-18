@@ -53,19 +53,32 @@ def enable_transaction_search(account_id):
     logs.put_resource_policy(policyName='AgentCoreTransactionSearch', policyDocument=policy_doc)
     print("[OK] Resource policy created")
 
+    # Transaction Search is a one-time, account-wide setting. If it was already
+    # enabled (e.g. by another stack or a prior deploy), the X-Ray APIs raise
+    # InvalidRequestException. Treat "already configured" as success so the
+    # custom resource is idempotent and does not roll the whole stack back.
+    def _ignore_already_set(fn, label):
+        try:
+            fn()
+            print(f"[OK] {label}")
+        except Exception as e:
+            msg = str(e)
+            if 'already' in msg.lower() or 'InvalidRequestException' in msg:
+                print(f"[SKIP] {label} — already configured: {msg}")
+            else:
+                raise
+
     # 2. Route trace segments to CloudWatch Logs
-    try:
-        xray.update_trace_segment_destination(Destination='CloudWatchLogs')
-        print("[OK] Trace segment destination set to CloudWatchLogs")
-    except xray.exceptions.InvalidRequestException:
-        print("[OK] Trace segment destination already set to CloudWatchLogs")
+    _ignore_already_set(
+        lambda: xray.update_trace_segment_destination(Destination='CloudWatchLogs'),
+        "Trace segment destination set to CloudWatchLogs",
+    )
 
     # 3. Set indexing to 100%
-    try:
-        xray.update_indexing_rule(Name='Default', Rule={'Probabilistic': {'DesiredSamplingPercentage': 100}})
-        print("[OK] Indexing rule set to 100%")
-    except xray.exceptions.InvalidRequestException:
-        print("[OK] Indexing rule already set")
+    _ignore_already_set(
+        lambda: xray.update_indexing_rule(Name='Default', Rule={'Probabilistic': {'DesiredSamplingPercentage': 100}}),
+        "Indexing rule set to 100%",
+    )
 
 
 def lambda_handler(event, context):

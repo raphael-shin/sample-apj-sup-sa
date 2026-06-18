@@ -1,0 +1,625 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Voice Analytics — Pipecat pipeline on its OWN Amazon Bedrock AgentCore Runtime
+  (voice deploy mode = agentcore). WebRTC transport with Amazon Kinesis Video Streams
+  (KVS) managed TURN — no Daily/3rd-party SFU. The browser POSTs SDP offers / ICE
+  candidates to the runtime's /invocations endpoint (JWT-authorized, same Cognito
+  CustomJWTAuthorizer as the Strands runtime); media relays via KVS TURN. The
+  pipeline's "LLM" stage invokes the SEPARATE Strands analytics runtime over HTTPS
+  Bearer (StrandsAgentRuntimeArn). Mirrors the runtime+ECR+CodeBuild(inline
+  Dockerfile)+BuildTrigger pattern of agentcore-stack.yaml, but in VPC NetworkMode
+  (required for UDP TURN) reusing the Aurora VPC private subnets + NAT.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: agentic-analytics
+
+  ArtifactsBucket:
+    Type: String
+
+  ArtifactsPrefix:
+    Type: String
+    Default: ''
+
+  VoiceAgentCodeS3Key:
+    Type: String
+    Description: S3 key for the voice bot code ZIP (bot.py + analytics_processor.py + auth.py + pyproject.toml + uv.lock)
+
+  CognitoUserPoolId:
+    Type: String
+
+  CognitoClientId:
+    Type: String
+    Description: Cognito app client id — validated as the JWT client_id (AllowedClients)
+
+  StrandsAgentRuntimeArn:
+    Type: String
+    Description: ARN of the EXISTING Strands analytics AgentCore Runtime the voice pipeline invokes (Bearer HTTPS)
+
+  StrandsAgentQualifier:
+    Type: String
+    Default: agentic_analytics_endpoint
+    Description: Endpoint qualifier of the Strands runtime
+
+  ChartBucket:
+    Type: String
+    Description: S3 bucket holding chart PNGs (for the presign backstop)
+
+  DeepgramApiKey:
+    Type: String
+    NoEcho: true
+    Description: Deepgram API key (STT + TTS)
+
+  DeepgramVoiceId:
+    Type: String
+    Default: aura-2-apollo-en
+
+  KvsChannelName:
+    Type: String
+    Default: voice-agent-turn
+    Description: KVS signaling channel used to fetch managed TURN credentials
+
+  AllowedOrigin:
+    Type: String
+    Default: '*'
+    Description: CORS allow-origin for the signaling proxy (the Amplify site URL, or *)
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC (reuse the Aurora VPC) for the runtime ENIs
+
+  PrivateSubnet1Id:
+    Type: String
+    Description: Private subnet (NAT egress) for the runtime ENI
+
+  PrivateSubnet2Id:
+    Type: String
+    Description: Second private subnet (NAT egress) for the runtime ENI
+
+Resources:
+  #============================================================================
+  # ECR Repository for the voice bot container
+  #============================================================================
+  VoiceECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${EnvironmentName}-voice-agent
+      # Let delete-stack remove the repo even though CodeBuild pushed images into it.
+      EmptyOnDelete: true
+      ImageScanningConfiguration:
+        ScanOnPush: false
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":3},"action":{"type":"expire"}}]}'
+
+  #============================================================================
+  # CodeBuild — builds the voice bot Docker image (ARM64, inline Dockerfile)
+  #============================================================================
+  VoiceCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-voice-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VoiceCodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: !GetAtt VoiceECRRepo.Arn
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::${ArtifactsBucket}/*
+
+  VoiceBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${EnvironmentName}-voice-build
+      ServiceRole: !GetAtt VoiceCodeBuildRole.Arn
+      Environment:
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: ECR_REPO_URI
+            Value: !GetAtt VoiceECRRepo.RepositoryUri
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+      Source:
+        Type: S3
+        Location: !Sub ${ArtifactsBucket}/${ArtifactsPrefix}${VoiceAgentCodeS3Key}
+        # Inline Dockerfile (mirrors agentcore-stack.yaml). Builds the AgentCore voice
+        # image: uv-locked install incl. the pipecat 'webrtc' extra (aiortc) +
+        # bedrock-agentcore; libgl1/libglib2.0-0 are native deps for aiortc. The
+        # container serves /invocations + /ping on :8080 via app.run() (bot.py runs
+        # the agentcore branch because VOICE_RUNTIME_MODE=agentcore).
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+            build:
+              commands:
+                - |
+                  cat > Dockerfile << 'DOCKERFILE'
+                  FROM public.ecr.aws/docker/library/python:3.12-slim
+                  ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1 VOICE_RUNTIME_MODE=agentcore
+                  RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+                  COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+                  WORKDIR /app
+                  COPY uv.lock pyproject.toml ./
+                  RUN uv sync --locked --no-install-project --no-dev
+                  ENV PATH="/app/.venv/bin:$PATH"
+                  COPY bot.py analytics_processor.py auth.py ./
+                  EXPOSE 8080
+                  CMD ["python", "bot.py"]
+                  DOCKERFILE
+                - docker build -t $ECR_REPO_URI:latest .
+            post_build:
+              commands:
+                - docker push $ECR_REPO_URI:latest
+      Artifacts:
+        Type: NO_ARTIFACTS
+      # aiortc/numba/onnxruntime build from source on arm64 → allow extra time.
+      TimeoutInMinutes: 30
+
+  #============================================================================
+  # Custom Resource Lambda — triggers CodeBuild and blocks the runtime until READY
+  #============================================================================
+  VoiceBuildTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-voice-build-trigger-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: VoiceBuildTriggerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt VoiceBuildProject.Arn
+
+  VoiceBuildTriggerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-voice-build-trigger
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt VoiceBuildTriggerRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3, json, time, urllib.request
+          def send(event, context, status, data=None, reason=None):
+              body = json.dumps({'Status': status, 'Reason': reason or 'OK',
+                  'PhysicalResourceId': event.get('PhysicalResourceId', 'voice-build'),
+                  'StackId': event['StackId'], 'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'], 'Data': data or {}})
+              urllib.request.urlopen(urllib.request.Request(event['ResponseURL'],
+                  data=body.encode(), headers={'Content-Type': ''}, method='PUT'))
+          def handler(event, context):
+              if event['RequestType'] == 'Delete':
+                  send(event, context, 'SUCCESS'); return
+              try:
+                  props = event['ResourceProperties']
+                  cb = boto3.client('codebuild')
+                  build = cb.start_build(projectName=props['ProjectName'])
+                  build_id = build['build']['id']
+                  while True:
+                      time.sleep(15)
+                      r = cb.batch_get_builds(ids=[build_id])
+                      status = r['builds'][0]['buildStatus']
+                      if status == 'SUCCEEDED':
+                          send(event, context, 'SUCCESS', {'ImageUri': props['ImageUri']})
+                          return
+                      elif status in ('FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'):
+                          send(event, context, 'FAILED', reason=f'Build {status}')
+                          return
+              except Exception as e:
+                  send(event, context, 'FAILED', reason=str(e)[:200])
+
+  VoiceBuildTrigger:
+    Type: Custom::VoiceBuildTrigger
+    DependsOn:
+      - VoiceBuildProject
+      - VoiceBuildTriggerFunction
+      - VoiceECRRepo
+    Properties:
+      ServiceToken: !GetAtt VoiceBuildTriggerFunction.Arn
+      ProjectName: !Ref VoiceBuildProject
+      # CodeKey changes when the bot code changes → re-runs the build on stack update.
+      CodeKey: !Ref VoiceAgentCodeS3Key
+      ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvironmentName}-voice-agent:latest
+
+  #============================================================================
+  # Security group for the runtime ENIs (egress only — TURN relays outbound)
+  #============================================================================
+  VoiceRuntimeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Voice AgentCore Runtime ENIs — egress to Deepgram/Bedrock/KVS/STS via NAT
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-voice-runtime-sg
+
+  #============================================================================
+  # Runtime execution role
+  #============================================================================
+  VoiceRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-voice-runtime-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VoiceRuntimePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # KVS managed TURN: fetch temporary, auto-rotating TURN credentials.
+              - Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:CreateSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                Resource: !Sub arn:aws:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/${KvsChannelName}/*
+              # Chart presign backstop (the processor normally relies on the Strands
+              # runtime presigning; this is a fallback path that reads chart PNGs).
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub arn:aws:s3:::${ChartBucket}/charts/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !GetAtt VoiceECRRepo.Arn
+              # VPC mode: the runtime manages ENIs in our subnets using this role.
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:CreateNetworkInterfacePermission
+                Resource: '*'
+      # NOTE: NO Memory perms (Memory writes happen in the Strands runtime), and NO
+      # bedrock-agentcore:InvokeAgentRuntime — the onward call to the Strands runtime
+      # is a JWT-Bearer HTTPS request validated by ITS authorizer, not an IAM call.
+
+  #============================================================================
+  # AgentCore Runtime (Container mode, VPC network — required for UDP TURN)
+  #============================================================================
+  VoiceAgentRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    DependsOn:
+      - VoiceRuntimeRole
+      - VoiceBuildTrigger
+    Properties:
+      # AgentCore names must match [a-zA-Z][a-zA-Z0-9_]{0,47} — no hyphens.
+      AgentRuntimeName: agentic_analytics_voice
+      Description: Pipecat voice pipeline (WebRTC + KVS TURN) for Agentic Analytics
+      RoleArn: !GetAtt VoiceRuntimeRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvironmentName}-voice-agent:latest
+      NetworkConfiguration:
+        NetworkMode: VPC
+        NetworkModeConfig:
+          Subnets:
+            - !Ref PrivateSubnet1Id
+            - !Ref PrivateSubnet2Id
+          SecurityGroups:
+            - !GetAtt VoiceRuntimeSecurityGroup.GroupId
+      # Same JWT-native inbound auth as the Strands runtime: the browser presents the
+      # signed-in user's Cognito ACCESS token as `Authorization: Bearer` on the WebRTC
+      # signaling POSTs. Cognito access tokens carry no 'aud', so validate on client_id.
+      AuthorizerConfiguration:
+        CustomJWTAuthorizer:
+          DiscoveryUrl: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPoolId}/.well-known/openid-configuration
+          AllowedClients:
+            - !Ref CognitoClientId
+      RequestHeaderConfiguration:
+        RequestHeaderAllowlist:
+          - Authorization
+      EnvironmentVariables:
+        VOICE_RUNTIME_MODE: agentcore
+        AWS_REGION: !Ref AWS::Region
+        # The pipeline's LLM stage invokes the Strands runtime (Bearer HTTPS).
+        AWS_AGENT_ARN: !Ref StrandsAgentRuntimeArn
+        AWS_AGENT_QUALIFIER: !Ref StrandsAgentQualifier
+        DEEPGRAM_API_KEY: !Ref DeepgramApiKey
+        DEEPGRAM_VOICE_ID: !Ref DeepgramVoiceId
+        CHART_BUCKET: !Ref ChartBucket
+        KVS_CHANNEL_NAME: !Ref KvsChannelName
+
+  VoiceAgentRuntimeEndpoint:
+    Type: AWS::BedrockAgentCore::RuntimeEndpoint
+    DependsOn: VoiceAgentRuntime
+    Properties:
+      AgentRuntimeId: !GetAtt VoiceAgentRuntime.AgentRuntimeId
+      AgentRuntimeVersion: !GetAtt VoiceAgentRuntime.AgentRuntimeVersion
+      Name: agentic_analytics_voice_endpoint
+      Description: Production endpoint for the voice runtime
+
+  #============================================================================
+  # WebRTC signaling proxy (tiny, AUTHENTICATED — NOT a public Function URL)
+  #
+  # The browser's Pipecat SmallWebRTC transport speaks plain JSON (POST {sdp,type},
+  # expect a JSON answer), but the runtime /invocations wants a wrapped body
+  # {type:"offer","data":...} and replies with SSE. This Lambda is the ~40-line
+  # translator from the official aws-agentcore-webrtc example, fronted by an API
+  # Gateway HTTP API + Cognito JWT authorizer (mirrors infrastructure/voice-proxy/).
+  # The browser hits it with its Cognito Bearer token; the authorizer validates at
+  # the edge (so the Lambda is NOT world-open); the Lambda forwards that SAME Bearer
+  # to the JWT-only voice runtime (NOT SigV4) and unwraps the SSE answer to JSON.
+  # Stdlib only (json/urllib) so the inline code needs no bundled deps.
+  #============================================================================
+  SignalingProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-voice-signaling-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  SignalingProxyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-voice-signaling
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt SignalingProxyRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          VOICE_RUNTIME_ARN: !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/${VoiceAgentRuntime.AgentRuntimeId}
+          VOICE_RUNTIME_QUALIFIER: agentic_analytics_voice_endpoint
+          AWS_REGION_NAME: !Ref AWS::Region
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      Code:
+        ZipFile: |
+          import json, os, urllib.request, urllib.error
+          from urllib.parse import quote
+
+          def _cors():
+              return {
+                  "Access-Control-Allow-Origin": os.environ.get("ALLOWED_ORIGIN", "*"),
+                  "Access-Control-Allow-Headers": "authorization,content-type",
+                  "Access-Control-Allow-Methods": "POST,PATCH,OPTIONS",
+              }
+
+          def _resp(status, body):
+              return {"statusCode": status,
+                      "headers": {"content-type": "application/json", **_cors()},
+                      "body": json.dumps(body)}
+
+          def _invoke_url():
+              arn = os.environ["VOICE_RUNTIME_ARN"]
+              q = os.environ["VOICE_RUNTIME_QUALIFIER"]
+              region = os.environ["AWS_REGION_NAME"]
+              return (f"https://bedrock-agentcore.{region}.amazonaws.com/runtimes/"
+                      f"{quote(arn, safe='')}/invocations?qualifier={quote(q, safe='')}")
+
+          def _bearer(event):
+              h = event.get("headers", {}) or {}
+              auth = h.get("authorization") or h.get("Authorization") or ""
+              return auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+
+          def _session_id(event):
+              h = event.get("headers", {}) or {}
+              return (h.get("x-amzn-bedrock-agentcore-runtime-session-id")
+                      or h.get("X-Amzn-Bedrock-AgentCore-Runtime-Session-Id") or "")
+
+          def _call_runtime(token, session_id, payload):
+              """POST to the JWT-only voice runtime (Bearer, NOT SigV4); parse SSE.
+
+              Returns the parsed 'answer' object (for offers) or {} (for ice).
+              """
+              headers = {"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json",
+                         "Accept": "text/event-stream"}
+              if session_id:
+                  headers["X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"] = session_id
+              req = urllib.request.Request(_invoke_url(), data=json.dumps(payload).encode(),
+                                           headers=headers, method="POST")
+              answer = None
+              with urllib.request.urlopen(req, timeout=25) as r:
+                  for raw in r:
+                      line = raw.decode("utf-8", "ignore").strip()
+                      if not line.startswith("data: "):
+                          continue
+                      try:
+                          ev = json.loads(line[6:])
+                      except Exception:
+                          continue
+                      if isinstance(ev, dict) and "answer" in ev:
+                          answer = ev["answer"]
+                          break
+              return answer
+
+          def handler(event, _ctx):
+              method = (event.get("requestContext", {}).get("http", {})
+                        .get("method", "POST")).upper()
+              if method == "OPTIONS":
+                  return _resp(200, {"ok": True})
+              # API Gateway's JWT authorizer already validated the token at the edge;
+              # we just forward it to the runtime as the user's Bearer.
+              token = _bearer(event)
+              if not token:
+                  return _resp(401, {"error": "missing bearer token"})
+              session_id = _session_id(event)
+              try:
+                  body = json.loads(event.get("body") or "{}")
+              except Exception:
+                  return _resp(400, {"error": "invalid JSON body"})
+              # The SmallWebRTC transport sends {sdp,type,pc_id,restart_pc} for the
+              # offer (POST) and an ICE payload for trickle (PATCH). Wrap both into the
+              # runtime's {type, data} contract; the offer also carries the user token
+              # + shared session id so the pipeline applies RBAC/RLS + one Memory thread.
+              try:
+                  if method == "PATCH":
+                      ans = _call_runtime(token, session_id,
+                                          {"type": "ice-candidates", "data": body})
+                      return _resp(200, {"status": "ok"})
+                  data = dict(body)
+                  data["gateway_token"] = token
+                  if session_id:
+                      data["runtimeSessionId"] = session_id
+                  answer = _call_runtime(token, session_id, {"type": "offer", "data": data})
+                  if not answer:
+                      return _resp(502, {"error": "no answer from runtime"})
+                  return _resp(200, answer)
+              except urllib.error.HTTPError as e:
+                  detail = e.read().decode("utf-8", "ignore")[:300]
+                  code = 401 if e.code in (401, 403) else 502
+                  return _resp(code, {"error": "runtime invoke failed", "detail": detail})
+              except Exception as e:
+                  return _resp(502, {"error": f"signaling error: {e}"})
+
+  SignalingHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${EnvironmentName}-voice-signaling-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowMethods: [POST, PATCH, OPTIONS]
+        AllowHeaders: [authorization, content-type, x-amzn-bedrock-agentcore-runtime-session-id]
+        MaxAge: 600
+
+  SignalingJwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref SignalingHttpApi
+      AuthorizerType: JWT
+      Name: CognitoJwt
+      IdentitySource:
+        - '$request.header.Authorization'
+      JwtConfiguration:
+        # Cognito access tokens carry no 'aud'; API GW validates 'client_id'.
+        Audience:
+          - !Ref CognitoClientId
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPoolId}
+
+  SignalingIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SignalingHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt SignalingProxyFunction.Arn
+      IntegrationMethod: POST
+      PayloadFormatVersion: '2.0'
+
+  SignalingOfferRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SignalingHttpApi
+      RouteKey: 'POST /api/offer'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref SignalingJwtAuthorizer
+      Target: !Sub integrations/${SignalingIntegration}
+
+  SignalingIceRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SignalingHttpApi
+      RouteKey: 'PATCH /api/offer'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref SignalingJwtAuthorizer
+      Target: !Sub integrations/${SignalingIntegration}
+
+  SignalingStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref SignalingHttpApi
+      StageName: $default
+      AutoDeploy: true
+
+  SignalingInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SignalingProxyFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SignalingHttpApi}/*/*
+
+Outputs:
+  VoiceAgentRuntimeId:
+    Description: Voice AgentCore Runtime id
+    Value: !GetAtt VoiceAgentRuntime.AgentRuntimeId
+  VoiceAgentRuntimeArn:
+    Description: Voice AgentCore Runtime ARN
+    Value: !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/${VoiceAgentRuntime.AgentRuntimeId}
+  VoiceAgentRuntimeEndpointArn:
+    Description: Voice runtime ENDPOINT ARN (informational)
+    Value: !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/${VoiceAgentRuntime.AgentRuntimeId}/runtime-endpoint/agentic_analytics_voice_endpoint
+  VoiceSignalingUrl:
+    Description: WebRTC signaling proxy base URL — the SPA POSTs SDP offers / PATCHes ICE to {this}/api/offer
+    Value: !Sub https://${SignalingHttpApi}.execute-api.${AWS::Region}.amazonaws.com

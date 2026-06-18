@@ -226,6 +226,15 @@ Resources:
             req = urllib.request.Request(event['ResponseURL'], data=body, headers={'Content-Type': ''}, method='PUT')
             urllib.request.urlopen(req)
 
+  EmptyGlueDriverBucketTrigger:
+    Type: Custom::EmptyGlueDriverBucket
+    DependsOn:
+      - GlueDriverBucket
+      - EmptyGlueDriverBucketFunction
+    Properties:
+      ServiceToken: !GetAtt EmptyGlueDriverBucketFunction.Arn
+      BucketName: !Ref GlueDriverBucket
+
   #============================================================================
   # Copy JDBC Driver from Artifacts to Glue Driver Bucket
   #============================================================================

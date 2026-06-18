@@ -1230,6 +1230,22 @@ Resources:
                 Action:
                   - s3:GetObject
                 Resource: !Sub arn:aws:s3:::${ArtifactsBucket}/*
+              # Chart code interpreter: the runtime role must be allowed to START
+              # and drive sessions on the custom CI (the CI's OWN execution role only
+              # governs what the sandbox can do once running — it does NOT grant the
+              # agent permission to invoke it). Without this the agent gets
+              # AccessDeniedException on StartCodeInterpreterSession and charts fail.
+              # Scoped to the chart CI and its sessions (not '*').
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:StartCodeInterpreterSession
+                  - bedrock-agentcore:InvokeCodeInterpreter
+                  - bedrock-agentcore:StopCodeInterpreterSession
+                  - bedrock-agentcore:GetCodeInterpreterSession
+                  - bedrock-agentcore:ListCodeInterpreterSessions
+                Resource:
+                  - !GetAtt ChartCodeInterpreter.CodeInterpreterArn
+                  - !Sub '${ChartCodeInterpreter.CodeInterpreterArn}/*'
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -1254,6 +1270,10 @@ Resources:
     Type: AWS::ECR::Repository
     Properties:
       RepositoryName: !Sub ${EnvironmentName}-agent
+      # Let delete-stack remove the repo even though CodeBuild pushed images into it
+      # — otherwise teardown fails with "repository still contains images" (mirrors
+      # the voice ECR repo in voice-agentcore-stack.yaml).
+      EmptyOnDelete: true
       ImageScanningConfiguration:
         ScanOnPush: false
       LifecyclePolicy:
@@ -1431,6 +1451,54 @@ Resources:
       ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvironmentName}-agent:latest
 
   #============================================================================
+  # Chart Code Interpreter (custom — renders matplotlib PNGs and uploads to S3)
+  #
+  # The agent calls this sandbox to render charts; the SOP (Step 4b) has it write
+  # the PNG to s3://${ArtifactsBucket}/charts/ and print only the S3 key. A CUSTOM
+  # interpreter is required because the default aws.codeinterpreter.v1 has NO
+  # execution role and therefore cannot reach S3. The agent then presigns the key
+  # for the UI (its runtime role already has s3:GetObject on the bucket).
+  #============================================================================
+  ChartCodeInterpreterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-chart-ci-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ChartUploadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub arn:aws:s3:::${ArtifactsBucket}/charts/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  ChartCodeInterpreter:
+    Type: AWS::BedrockAgentCore::CodeInterpreterCustom
+    Properties:
+      # AgentCore names must match [a-zA-Z][a-zA-Z0-9_]{0,47} — no hyphens. Hardcoded
+      # with underscores (like AgentRuntimeName above) since ${EnvironmentName}
+      # contains a hyphen (agentic-analytics).
+      Name: agentic_analytics_chart_ci
+      Description: Renders matplotlib charts and uploads them to S3 for the analytics agent
+      NetworkConfiguration:
+        NetworkMode: PUBLIC   # needs egress to reach S3
+      ExecutionRoleArn: !GetAtt ChartCodeInterpreterRole.Arn
+
+  #============================================================================
   # AgentCore Runtime (Container mode — pre-built image, fast cold start)
   #============================================================================
   AgentRuntime:
@@ -1438,6 +1506,7 @@ Resources:
     DependsOn:
       - AgentRuntimeRole
       - BuildTrigger
+      - ChartCodeInterpreter
     Properties:
       AgentRuntimeName: agentic_analytics_agent
       Description: Strands agent for Agentic Analytics demo
@@ -1447,14 +1516,35 @@ Resources:
           ContainerUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvironmentName}-agent:latest
       NetworkConfiguration:
         NetworkMode: PUBLIC
+      # JWT-native inbound auth: callers (SPA + voice bot) present the signed-in
+      # user's Cognito ACCESS token as `Authorization: Bearer`. The runtime validates
+      # signature/issuer/client_id before invoking the agent — replacing IAM/SigV4.
+      # Cognito access tokens carry no 'aud', so we validate on client_id (AllowedClients),
+      # matching the Gateway authorizer above. The request-header allowlist passes the
+      # Authorization header through so the agent can read claims (context.request_headers).
+      AuthorizerConfiguration:
+        CustomJWTAuthorizer:
+          DiscoveryUrl: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPoolId}/.well-known/openid-configuration
+          AllowedClients:
+            - !Ref CognitoClientId
+      RequestHeaderConfiguration:
+        RequestHeaderAllowlist:
+          - Authorization
       EnvironmentVariables:
         GATEWAY_URL: !GetAtt Gateway.GatewayUrl
         AWS_REGION: !Ref AWS::Region
-        BEDROCK_MODEL_ID: global.anthropic.claude-opus-4-6-v1
+        BEDROCK_MODEL_ID: global.anthropic.claude-opus-4-8
         BYPASS_TOOL_CONSENT: 'true'
         GUARDRAIL_ID: !If [GuardrailEnabled, !Ref Guardrail, '']
         GUARDRAIL_VERSION: !If [GuardrailEnabled, 'DRAFT', '']
         MEMORY_ID: !GetAtt AgentMemory.MemoryId
+        SOP_S3_BUCKET: !Ref ArtifactsBucket
+        # Charts: the agent renders matplotlib PNGs in the custom Code Interpreter
+        # below (which can write to S3), then presigns the key for the UI. The agent
+        # role already has s3:GetObject on the bucket, so it can presign.
+        ENABLE_CHART_TOOL: 'true'
+        CHART_CI_ID: !GetAtt ChartCodeInterpreter.CodeInterpreterId
+        CHART_BUCKET: !Ref ArtifactsBucket
 
   #============================================================================
   # AgentCore Runtime Endpoint
@@ -1492,6 +1582,10 @@ Outputs:
   AgentRuntimeId:
     Description: AgentCore Runtime ID
     Value: !GetAtt AgentRuntime.AgentRuntimeId
+
+  AgentRuntimeArn:
+    Description: AgentCore Runtime ARN (what the voice bot invokes)
+    Value: !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/${AgentRuntime.AgentRuntimeId}'
 
   AgentRuntimeEndpointId:
     Description: AgentCore Runtime Endpoint ID

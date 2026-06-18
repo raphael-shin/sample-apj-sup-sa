@@ -20,7 +20,7 @@ rds_client = boto3.client('rds-data', region_name=AWS_REGION)
 
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 SCHEMA_PATH = os.path.join(PROJECT_ROOT, 'dataset', 'schema', 'schema.sql')
 DATA_DIR = os.path.join(PROJECT_ROOT, 'dataset', 'data')
 
@@ -401,15 +401,18 @@ FROM customer_totals GROUP BY account_id, CASE WHEN total_revenue >= 5000 THEN '
 def create_views(resource_arn, secret_arn, database):
     """Create all analytics views."""
     print("Creating analytics views...")
-    
+
     success_count = 0
     for name, sql in VIEWS:
         try:
-            execute_sql(resource_arn, secret_arn, database, sql)
+            execute_sql(resource_arn, secret_arn, database, f"DROP VIEW IF EXISTS {name} CASCADE")
+            # Strip CREATE OR REPLACE so we use plain CREATE VIEW after drop
+            create_sql = sql.replace("CREATE OR REPLACE VIEW", "CREATE VIEW", 1)
+            execute_sql(resource_arn, secret_arn, database, create_sql)
             print(f"  [OK] Created view: {name}")
             success_count += 1
         except Exception as e:
-            print(f"  [FAIL] Failed {name}: {str(e)[:100]}")
+            print(f"  [FAIL] Failed {name}: {str(e)}")
     
     print(f"[OK] Views created: {success_count}/{len(VIEWS)}")
 
