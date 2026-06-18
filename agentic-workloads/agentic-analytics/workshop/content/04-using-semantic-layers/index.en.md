@@ -57,6 +57,8 @@ AgentCore Runtime (Strands Agent)
 
 The Lambda handles multi-tenancy the same way as the other toolsets: it extracts `account_id` from the JWT (propagated via the Gateway Interceptor) and injects it as a filter into every Cube query before sending it to the API.
 
+::alert[**This optional lab uses scripts, on purpose.** The rest of the workshop builds the agent by editing one CloudFormation top-up and running `make deploy`. This lab is different: it stands up a **parallel, second** agent (its own Gateway, Runtime, and UI) so you can compare the semantic-layer agent side-by-side with the one you built. It also pushes Cube data models to an EC2 container over S3 + SSM. Those steps don't map cleanly to the single top-up stack, so this lab keeps its purpose-built `deploy_cube_models.py` and `deploy_semantic_layer_stack.py` scripts — a deliberate exception, like the evaluation CLI in Step 10.]{type="info"}
+
 ## Lab Procedures
 
 ### Step 1: Access the Cube Core Playground UI

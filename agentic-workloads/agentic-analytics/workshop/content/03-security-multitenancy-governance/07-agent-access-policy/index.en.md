@@ -47,29 +47,37 @@ User logs in → Cognito JWT (custom:role [for role-based access control], custo
 
 ## Lab Procedures
 
-### Step 7.1: Deploy Cedar Policies (TODO 7.1)
+### Step 7.1: Add Cedar Policies (TODO 7.1)
 
 :link[AgentCore Policy]{href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy.html"} uses :link[Cedar]{href="https://www.cedarpolicy.com/"}, a policy language created by AWS. Cedar policies are **deterministic** — unlike prompt-based restrictions, they use formal logic for safeguarding against prompt injection.
 
-Open :code[policy/deploy_policy.py]{showCopyAction=true} and find `TODO 7.1`. Uncomment the `forbid_write_policy` block:
+Open :code[/workshop/agentic-analytics/app/agentcore_strands/agentcore-topup-stack.yaml]{showCopyAction=true}. **Step 7a has TWO fences you must uncomment** — both are labelled `Step 7a`:
 
-::::expand{header="💡 Need help with TODO 7.1? Click to see the solution"}
-Uncomment the entire `forbid_write_policy = f'''...'''` block. This Cedar policy says: "Forbid any OAuthUser whose `custom:role` tag equals `analyst` from calling `APIInteg___create_booking_tool`." The `when` clause is the condition — only analysts are blocked.
+1. The **Policy Engine + Cedar policies** block (the `PolicyEngine` resource and the three `AWS::BedrockAgentCore::Policy` resources).
+2. The **3-line `PolicyEngineConfiguration` block on the Gateway** (this wires the Gateway to the policy engine — they must come live together, or the Gateway would reference a policy engine that doesn't exist).
+
+::::expand{header="💡 Need help with TODO 7.1? Click to see exactly what to uncomment"}
+Uncomment **both** Step-7a fences:
+- The `# ===== UNCOMMENT FROM HERE (Step 7a: Cedar policy engine ...)` fence — the `PolicyEngine`, `AllowAllToolsPolicy`, `ForbidWriteAnalystPolicy`, and `ForbidCustomSqlStaffPolicy` resources.
+- The small `# --- Step 7a: ALSO uncomment these 3 lines ...` block on the `Gateway` resource — the `PolicyEngineConfiguration:` / `Arn:` / `Mode:` lines.
+
+If you uncomment only the policies but not the Gateway block, the policies exist but aren't enforced. If you uncomment only the Gateway block but not the policies, `make deploy` fails because the Gateway references a `PolicyEngine` that isn't there. Uncomment both.
 ::::
 
-Deploy the Policy Engine:
+Then deploy — first in LOG_ONLY mode (the default), which logs policy decisions without blocking:
 
 ```bash
-python3 policy/deploy_policy.py
+cd /workshop/agentic-analytics/app/agentcore_strands
+make deploy
 ```
 
-This creates a Policy Engine with three Cedar policies and attaches it to the Gateway in LOG_ONLY mode. Then switch to enforcement:
+Once that succeeds, switch to **enforcement** by redeploying with the policy mode flipped:
 
 ```bash
-python3 policy/deploy_policy.py --enforce
+make deploy POLICY_MODE=ENFORCE
 ```
 
-The three policies:
+The three policies (already written in the template) are:
 
 ```cedar
 // 1. Base permit — allow all tools for any authenticated principal
@@ -89,27 +97,37 @@ forbid(principal is AgentCore::OAuthUser,
 when { principal.getTag("custom:role") == "staff" };
 ```
 
+::alert[**`make deploy POLICY_MODE=ENFORCE`** passes `PolicyMode=ENFORCE` to the stack — the same `PolicyMode` parameter the Gateway's `PolicyEngineConfiguration.Mode` reads. LOG_ONLY logs decisions but allows every call (useful for testing); ENFORCE blocks unauthorized calls at the Gateway.]{type="info"}
+
 ::alert[**Forbid wins over permit.** Cedar uses default-deny with forbid-wins semantics. The base permit allows everything, then forbid policies carve out exceptions. If any forbid matches, access is denied — regardless of permits. This is the :link[recommended pattern]{href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/example-policies.html"} for AgentCore Policy.]{type="info"}
 
-### Step 7.2: Switch to the RLS-Enforced Database Role
+### Step 7.2: Switch to the RLS-Enforced Database Role (TODO 7.2)
 
 Currently, your Lambda tools connect to the database as `postgres` — the table owner. In PostgreSQL, **table owners bypass Row-Level Security by default**. This means RLS policies have no effect, and all tenants' data is visible.
 
-To fix this, you'll switch to `app_user` — a non-owner role that was created during CloudFormation deployment. Because `app_user` doesn't own the tables, PostgreSQL automatically enforces RLS policies on every query.
+To fix this, you'll switch to `app_user` — a non-owner role created during the base CloudFormation deployment. Because `app_user` doesn't own the tables, PostgreSQL automatically enforces RLS on every query.
 
-#### TODO 7.2: Switch Secrets Manager ARN to use app_user database user
+#### TODO 7.2: Flip the EnforceRls switch
 
-Open :code[config.env]{showCopyAction=true}, locate `TODO 7.2` and find the commented-out `APP_AURORA_SECRET_ARN` line. Uncomment it:
+Open :code[agentcore-topup-stack.yaml]{showCopyAction=true} and find `TODO 7.2` in the `Conditions:` block near the top of the file. **Comment the first line and uncomment the second** — exactly one line each:
 
-```bash
+```yaml
 # Before (postgres — bypasses RLS):
-# APP_AURORA_SECRET_ARN=arn:aws:secretsmanager:...app-credentials-...
+  EnforceRls: !Equals ['off', 'on']     # default OFF — postgres secret, RLS bypassed
+  # EnforceRls: !Equals ['on', 'on']    # Step 7.2 ON — app_user secret, RLS enforced
 
 # After (app_user — RLS enforced):
-APP_AURORA_SECRET_ARN=arn:aws:secretsmanager:...app-credentials-...
+  # EnforceRls: !Equals ['off', 'on']   # default OFF — postgres secret, RLS bypassed
+  EnforceRls: !Equals ['on', 'on']      # Step 7.2 ON — app_user secret, RLS enforced
 ```
 
-::alert[**What does this change?** The `AURORA_SECRET_ARN` secret contains `postgres` credentials (table owner, bypasses RLS). The `APP_AURORA_SECRET_ARN` secret contains `app_user` credentials (non-owner, RLS enforced). When the deploy scripts see `APP_AURORA_SECRET_ARN`, they configure the Lambda to use `app_user` instead of `postgres`. The username is stored inside the Secrets Manager secret — the Lambda code doesn't change.]{type="info"}
+Then redeploy:
+
+```bash
+make deploy
+```
+
+::alert[**What does this change?** All three SQL Lambdas read their database secret as `AURORA_SECRET_ARN: !If [EnforceRls, <app_user secret>, <postgres secret>]`. With `EnforceRls` off, they use the `postgres` owner secret (RLS bypassed). Flipping it on points them at the `app_user` secret (non-owner, RLS enforced). The secret ARNs are imported from the base stack; the Lambda code doesn't change — only which secret it reads. One `make deploy` updates all three Lambdas at once.]{type="info"}
 
 ### Step 7.3: Understand RLS Session Variables
 
@@ -142,7 +160,7 @@ This pattern is the same in all three Lambda toolsets. The `rls_context` is extr
 
 The Lambda tools now know how to SET session variables from JWT claims — but the JWT needs to reach the Lambda first. By default, the Gateway authenticates the request but does **not** forward the Authorization header to Lambda targets.
 
-The :link[Gateway Interceptor]{href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-headers.html"} solves this. You deployed it in Step 2 — it's a Lambda function that runs on every Gateway request and injects headers into the target call. The `Authorization` header from the interceptor response is :link[automatically propagated to the target]{href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-headers.html#gateway-headers-interceptor-propagation"}.
+The :link[Gateway Interceptor]{href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-headers.html"} solves this. It's already part of your stack's baseline — the `InterceptorLambda` and the Gateway's `InterceptorConfigurations` came live with the very first `make deploy` in Step 2. It's a Lambda function that runs on every Gateway request and injects headers into the target call. The `Authorization` header from the interceptor response is :link[automatically propagated to the target]{href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-headers.html#gateway-headers-interceptor-propagation"}.
 
 Open :code[infra/interceptor_lambda.py]{showCopyAction=true} and look at the key section:
 
@@ -162,15 +180,15 @@ if auth_header:
 
 This is the bridge between the Gateway (which validates the JWT) and the Lambda (which reads the JWT claims for RLS). Without it, `_extract_rls_context_from_jwt()` in the Lambda would receive no headers and RLS would have no tenant or user's role context.
 
-### Step 7.5: Redeploy All Lambda Tools
+### Step 7.5: One deploy updates all three Lambdas
 
-Re-run the three deploy scripts. They will pick up the new `APP_AURORA_SECRET_ARN` from `config.env` and update the Lambda configuration to use `app_user`:
+There are **no separate scripts to re-run.** Because all three SQL Lambdas share the single `EnforceRls` switch you flipped in Step 7.2, the `make deploy` you ran there already updated `DataFoundationLambda`, `ApiIntegLambda`, and `CustomSqlLambda` to read the `app_user` secret in one shot. Confirm the stack settled:
 
 ```bash
-python3 infra/deploy_data_toolset.py
-python3 infra/deploy_api_toolset.py
-python3 infra/deploy_sql_toolset.py
+make status   # expect UPDATE_COMPLETE
 ```
+
+If you ran Steps 7.1 and 7.2 as separate `make deploy` calls (recommended), the Cedar enforcement and the RLS switch are both live now.
 
 ### Step 7.6: Test Tool-Level Access Control
 
@@ -246,8 +264,9 @@ The Cedar policy doesn't just *refuse* the booking tool — it makes it **invisi
 
 ## Verification
 
-- Policy Engine deploys with 3 Cedar policies in ~15 seconds
-- `--enforce` switches to enforcement mode
+- After uncommenting both Step-7a fences and `make deploy`, the stack has a Policy Engine with 3 Cedar policies
+- `make deploy POLICY_MODE=ENFORCE` switches the Gateway to enforcement mode
+- Flipping `EnforceRls` and `make deploy` updates all three SQL Lambdas to the `app_user` secret
 - Admin (Lyra) can create bookings; analyst (Orion) cannot see the tool
 - Mythical Unicorns user sees only Mythical Unicorns data
 - Mythic Unicorns user sees only Mythic Unicorns data
@@ -255,13 +274,12 @@ The Cedar policy doesn't just *refuse* the booking tool — it makes it **invisi
 ## Troubleshooting
 
 **Still seeing all tenants' data**
-- Did you uncomment `APP_AURORA_SECRET_ARN` in `config.env`?
-- Did you re-run all three deploy scripts after the change?
-- Did you uncomment the SET statements in all three Lambda files?
-- Did you deploy the interceptor (`deploy_interceptor.py`)?
+- Did you flip the `EnforceRls` condition (comment line 1, uncomment line 2) and `make deploy`?
+- Confirm `make status` shows `UPDATE_COMPLETE` after the flip.
+- The Gateway Interceptor must be live — it's in the Step-2 baseline, so confirm the stack deployed cleanly back then.
 
 **Analyst can still create bookings**
-- Verify the policy is in ENFORCE mode (not LOG_ONLY)
+- Verify you ran `make deploy POLICY_MODE=ENFORCE` (not just `make deploy`, which defaults to LOG_ONLY).
 - The user must log in via the Cognito Hosted UI (click Login button). Direct API auth doesn't carry OAuth claims.
 
 **Queries return zero results**

@@ -22,6 +22,8 @@ Observability (Step 9) tells you *what happened*. Evaluation tells you *how well
 | **On-demand** | You trigger it manually | Test after changes, investigate specific sessions |
 | **Online** | Continuously on live traffic | Production monitoring, quality alerts |
 
+::alert[**A deliberate exception to the "no CLI" rule.** Everywhere else in this workshop you build the agent layer by editing CloudFormation and running `make deploy`. Evaluation is different: it's an analysis harness that scores existing traces, and there is **no CloudFormation resource** for it — so this step uses the `agentcore eval` CLI directly. This is the one place the CLI is the right tool, the same way the optional Cube lab keeps its own scripts.]{type="info"}
+
 ## Lab Procedures
 
 ### Step 10.1: Run an On-Demand Evaluation
