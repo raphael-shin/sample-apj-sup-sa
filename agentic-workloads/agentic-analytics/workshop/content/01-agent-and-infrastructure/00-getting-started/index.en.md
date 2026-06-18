@@ -66,44 +66,37 @@ COGNITO_DOMAIN=agentic-analytics-xxxxxxxxxxxx.auth.us-east-1.amazoncognito.com
 
 ## Set Up the Python Environment
 
-The Python virtual environment is pre-installed on the EC2 instance. Activate it and install the `uv` package manager (needed by AgentCore for build process without Docker):
+The Python virtual environment is pre-installed on the EC2 instance. Activate it:
 
 ```bash
 cd /workshop/agentic-analytics
 source .venv/bin/activate
 export AWS_DEFAULT_REGION=us-east-1
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
 ```
 
-::alert[The :code[export AWS_DEFAULT_REGION=us-east-1]{showCopyAction=true} is needed because the AgentCore CLI defaults to `us-west-2`. The `uv` install enables AgentCore's direct code deploy mode — without it, deployment falls back to a container build.]{type="warning"}
+::alert[`AWS_DEFAULT_REGION` is set so the AWS CLI (used by `make`) targets the right region. You do **not** need the `agentcore` CLI in this workshop — the agent's container image is built and deployed by CloudFormation (you'll see this in Step 2).]{type="info"}
 
 ## Explore the Codebase
 
-Click the files icons on top left in the Code Editor UI to view the directory. Here are the key files you'll work with throughout the workshop:
+Click the files icon on the top left in the Code Editor UI to view the directory. Here are the key files you'll work with throughout the workshop:
 
 ```
 app/agentcore_strands/
-├── unicorn_rental_agent.py             # Main agent (TODOs throughout)
-├── unicorn_rental_analytics.sop.md     # Agent behavior instructions
-├── tools/                             # Lambda functions — you'll edit for RLS
+├── agentcore-topup-stack.yaml         # ⭐ The ONE CloudFormation template you edit each step
+├── Makefile                           # make deploy / make build / make outputs
+├── unicorn_rental_agent.py            # Main agent (code TODOs in Step 2)
+├── unicorn_rental_analytics.sop.md    # Agent behavior instructions (the SOP)
+├── tools/                             # Lambda function source for the toolsets
 │   ├── prebaked_sql_toolset_lambda.py  # 20+ prebaked analytics tools
 │   ├── api_integration_toolset_lambda.py # API integrations (booking, etc.)
 │   └── custom_sql_toolset_lambda.py    # Custom SQL queries
-├── infra/                             # Deploy scripts — run as-is
-│   ├── deploy_gateway.py              # Creates MCP Gateway
-│   ├── deploy_data_toolset.py         # Deploys 27 analytics tools│   ├── deploy_api_toolset.py          # API integration tools
-│   ├── deploy_sql_toolset.py
-│   └── deploy_interceptor.py
-├── policy/                            # Access control
-│   └── deploy_policy.py
-├── guardrails/                        # Content safety
-│   └── deploy_guardrail.py
-├── config.env                         # Environment configuration
+├── config.env                         # Base infrastructure coordinates (read by make + the Step-1 exercise)
 └── requirements.txt
 ```
 
-Open `unicorn_rental_agent.py` in the editor. You'll notice several `# TODO` comments — these are the integration points you'll complete in each step.
+The workflow for the rest of the workshop is always the same: **edit `agentcore-topup-stack.yaml`** (uncomment one marked section, or flip one value) → **`make deploy`**. Open the template now and read its banner comment — it explains exactly how the uncomment fences work.
+
+Open `unicorn_rental_agent.py` too. You'll notice several `# TODO` comments — you'll complete those in Step 2, then the agent is built and deployed for you by CloudFormation.
 
 ## Verification
 

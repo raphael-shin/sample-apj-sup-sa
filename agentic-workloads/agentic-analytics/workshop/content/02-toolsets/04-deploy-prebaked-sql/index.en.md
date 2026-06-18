@@ -18,55 +18,67 @@ This is the **first of three toolsets** you'll deploy. The Prebaked SQL pattern 
 
 ## Lab Procedures
 
-### Step 4.1: Deploy the Prebaked SQL Toolset
+### Step 4.1: Uncomment the Prebaked SQL toolset and deploy
 
-Since your Code Editor terminal is currently running the dev web server from step 3, you can open a new terminal by clicking the plus `+` button at the top right of the terminal pane. Run the below commands in the new terminal.
+This step adds the AWS Lambda that implements the tools (database connection + queries) **and** registers it with the AgentCore Gateway as an MCP target — all by uncommenting one section of the top-up template.
 
-The commands below will deploy the AWS Lambda function that contains the implementations for the tools (connection to database and queries) and associate the Lambda function with AgentCore Gateway so the tools will be available through MCP.
+Open :code[/workshop/agentic-analytics/app/agentcore_strands/agentcore-topup-stack.yaml]{showCopyAction=true} and find the fence:
+
+```
+# ===== UNCOMMENT FROM HERE (Step 4: Prebaked SQL toolset ...) =====
+...
+# ===== UNCOMMENT TO HERE (Step 4) =====
+```
+
+Delete the leading `# ` on every line **between** the two marker lines (this brings the `DataFoundationLambda`, its role + permission, the psycopg2 layer, and the `DataToolsTarget` to life). Then deploy:
 
 ```bash
 cd /workshop/agentic-analytics/app/agentcore_strands
-python3 infra/deploy_data_toolset.py
+make deploy
 ```
 
-This takes ~5 minutes. Expected output:
+::::expand{header="💡 Not sure you uncommented it cleanly? Click to see the whole Step-4 block"}
+The fenced block, once uncommented, defines `DataFoundationLambdaRole`, `DataFoundationLambda`, `DataFoundationLambdaPermission`, the conditional `Psycopg2Layer`, and the `DataToolsTarget` Gateway target. If `make deploy` errors with a YAML/indentation complaint, the safest fix is to copy the exact block from the workshop solution or re-clone the file — every line in the block is indented two spaces under `Resources:`.
+::::
 
-```
-✅Target is ready
-[OK] Created DataTools target: XXXXXXXXXX
-```
+`make deploy` updates the stack in a couple of minutes. When it finishes, the Gateway has a new target named `PrebakedSQL` with 20+ tools.
 
-### Step 4.2: Examine the Deploy Script — Tool Schema and Gateway Registration
+### Step 4.2: Examine what you uncommented — Tool Schema and Gateway Registration
 
-Let's understand what the script just did. Open :code[infra/deploy_data_toolset.py]{showCopyAction=true}.
+Let's understand what that block does. Still in :code[agentcore-topup-stack.yaml]{showCopyAction=true}, look at the `DataToolsTarget` resource you just uncommented.
 
-**Line 29 — `TOOL_SCHEMA`:** This is the list of tools the Gateway advertises to the agent. Each entry has three fields:
+**`ToolSchema.InlinePayload`:** This is the list of tools the Gateway advertises to the agent. Each entry has three fields:
 
-```python
-{"name": "get_top_revenue_customers_tool",
- "description": "Get top customers by revenue",
- "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer"}}}}
-```
-
-- `name` — the tool identifier the LLM sees and calls
-- `description` — the LLM reads this to decide *when* to call the tool (this is the only thing guiding tool selection!). It is good to provide sufficient details to avoid confusion between several similar tools.
-- `inputSchema` — tells the LLM what arguments to extract from the user's question
-
-**Line 434 — Gateway registration:** Scroll down to the `main()` function. This is where the tool schema gets registered to the Gateway as a target:
-
-```python
-lambda_target = client.create_mcp_gateway_target(
-    gateway=gateway,
-    name="PrebakedSQL",
-    target_type="lambda",
-    target_payload={
-        "lambdaArn": lambda_arn,
-        "toolSchema": {"inlinePayload": TOOL_SCHEMA}
-    },
-)
+```yaml
+- Name: get_top_revenue_customers_tool
+  Description: Get top customers by revenue
+  InputSchema:
+    Type: object
+    Properties:
+      limit: { Type: integer }
 ```
 
-The Gateway now knows: *"When the agent calls any tool from `TOOL_SCHEMA`, route it to this Lambda ARN."* The target name `PrebakedSQL` becomes a prefix — the agent sees tools as `PrebakedSQL___get_top_revenue_customers_tool`.
+- `Name` — the tool identifier the LLM sees and calls
+- `Description` — the LLM reads this to decide *when* to call the tool (this is the only thing guiding tool selection!). Provide enough detail to avoid confusion between similar tools.
+- `InputSchema` — tells the LLM what arguments to extract from the user's question
+
+**The Gateway target itself:** the resource registers that schema to the Gateway and points it at the Lambda:
+
+```yaml
+DataToolsTarget:
+  Type: AWS::BedrockAgentCore::GatewayTarget
+  Properties:
+    GatewayIdentifier: !GetAtt Gateway.GatewayIdentifier
+    Name: PrebakedSQL
+    TargetConfiguration:
+      Mcp:
+        Lambda:
+          LambdaArn: !GetAtt DataFoundationLambda.Arn
+          ToolSchema:
+            InlinePayload: [ ... the tool list above ... ]
+```
+
+The Gateway now knows: *"When the agent calls any tool in this `InlinePayload`, route it to this Lambda."* The target name `PrebakedSQL` becomes a prefix — the agent sees tools as `PrebakedSQL___get_top_revenue_customers_tool`.
 
 ::alert[**The tool description is your steering wheel.** If you write `"Get top customers by revenue"`, the LLM will call this tool when users ask about top customers. If the description is vague or wrong, the LLM picks the wrong tool. Good descriptions = accurate routing.]{type="info"}
 
@@ -86,7 +98,7 @@ Open :code[unicorn_rental_analytics.sop.md]{showCopyAction=true} and review thes
 
 ::alert[**The SOP is the agent's playbook.** Without it, the LLM guesses which tool to call and how to format responses. With it, behavior is consistent, testable, and reviewable — like code, but in natural language. As you add more toolsets in the next steps, you'll see how the SOP guides the agent's behavior for each one.]{type="info"}
 
-::alert[**Should I redeploy the agent?** Adding toolset may beyond just deploying the tools & associating it with the MCP gateway as we did above. You likely need to add description in the SOP to help the agent with the routing when using the newly added tools, in addition to other things like response format for the tool. When you change the SOP, you need to redeploy the agent e.g. `agentcore deploy`. In our case, the SOP is preloaded with the instructions around the tools, so we skip the agent redeployment. ]{type="info"}
+::alert[**Should I rebuild the agent?** Adding a toolset is often more than registering tools on the Gateway. You usually also add guidance in the SOP to help the agent route to the new tools, plus response-formatting rules. When you change the SOP (or any agent code), rebuild the image with `make build`. In our case the SOP already ships with the instructions for every tool, so no rebuild is needed here — uncommenting the target and `make deploy` is enough.]{type="info"}
 
 ### Step 4.4: Test — Ask Your First Analytics Question
 
@@ -135,7 +147,7 @@ Notice: the function queries the `top_revenue_customers` **View** — not a raw 
 
 ## Verification
 
-- `deploy_data_toolset.py` creates the PrebakedSQL target with 20+ tools
+- After uncommenting Step 4 and `make deploy`, the Gateway has a `PrebakedSQL` target with 20+ tools (check `make outputs` / the Gateway console)
 - "Top customers" query returns data and the trace shows `get_top_revenue_customers_tool`
 - You can see the View name in the Lambda code for each tool
 

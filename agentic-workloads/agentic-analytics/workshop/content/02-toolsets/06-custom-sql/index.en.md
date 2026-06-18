@@ -83,25 +83,24 @@ Open :code[unicorn_rental_analytics.sop.md]{showCopyAction=true} and review:
 
 ::alert[**The SOP creates a layered defense against SQL hallucination:** (1) Prebaked tools handle known queries — minimum hallucination risk. (2) For unknown queries, Glue schema + RAG context ground the SQL generation. (3) Human approval catches any remaining errors. (4) Lambda-level validation blocks dangerous patterns. Each layer reduces risk independently.]{type="info"}
 
-### Step 6.5: Deploy the Custom SQL Toolset
+### Step 6.5: Uncomment the Custom SQL toolset and deploy
+
+Open :code[/workshop/agentic-analytics/app/agentcore_strands/agentcore-topup-stack.yaml]{showCopyAction=true} and find the **Step 6** fence:
+
+```
+# ===== UNCOMMENT FROM HERE (Step 6: Custom SQL toolset ...) =====
+...
+# ===== UNCOMMENT TO HERE (Step 6) =====
+```
+
+Uncomment everything between the markers (this brings up `CustomSqlLambda`, its role + permission, and the `CustomSqlTarget` with its three tools: `text_to_sql_tool`, `get_schema_context_tool`, `execute_sql_tool`). The Lambda already imports the Glue database name and the Bedrock Knowledge Base id from the base stack's exports — no values to wire by hand. Then deploy:
 
 ```bash
 cd /workshop/agentic-analytics/app/agentcore_strands
-python3 infra/deploy_sql_toolset.py
+make deploy
 ```
 
-Expected output:
-
-```
-Registering to Gateway...
-Note: 'targets'
-[OK] Created target: XXXXXXXXXX
-
-==================================================
-[OK] Deployment complete!
-   Lambda: arn:aws:lambda:us-east-1:xxxxxxxxxxxx:function:custom-sql-toolset-lambda
-   Gateway Target: XXXXXXXXXX
-```
+When it finishes, the Gateway has a third target, `CustomSQL`.
 
 ### Step 6.6: Test Custom SQL Queries
 
@@ -156,7 +155,7 @@ The `execute_sql_tool` enforces:
 
 - `business-context.md` contains schema descriptions, business rules, and sample SQL
 - Semantic search in the KB console returns relevant chunks
-- `deploy_sql_toolset.py` creates the CustomSQL target with 3 tools
+- After uncommenting Step 6 and `make deploy`, the Gateway has a `CustomSQL` target with 3 tools
 - Ad-hoc questions show the approval card with a business-level query plan
 - Approved queries return formatted results with insights
 - Multiple query types work: JOINs, aggregations, time patterns, conditional grouping
