@@ -127,7 +127,7 @@ def _rewrite_chart_tags(text: str) -> str:
 GATEWAY_URL = os.getenv("GATEWAY_URL", "")
 
 # Bedrock model configuration
-model_id = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-opus-4-8")
+model_id = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-opus-4-6-v1")
 region = os.getenv("AWS_REGION", "us-east-1")
 
 # Guardrail configuration (native Bedrock integration)

@@ -651,6 +651,19 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Ref CodeEditorSecret
+        - PolicyName: RegisterCognitoCallback
+          # Lets the post-CloudFront resolver append the CloudFront /app URL to the
+          # Cognito user-pool client's callback/logout lists (fixes redirect_mismatch:
+          # the client ships with only localhost callbacks; the live URL isn't known
+          # until CloudFront exists).
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                Resource: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
 
   UrlResolverFunction:
     Type: AWS::Lambda::Function
@@ -666,6 +679,34 @@ Resources:
           def send(event, context, status, data={}, reason=''):
               body = json.dumps({'Status': status, 'Reason': reason or 'OK', 'PhysicalResourceId': context.log_stream_name, 'StackId': event['StackId'], 'RequestId': event['RequestId'], 'LogicalResourceId': event['LogicalResourceId'], 'Data': data})
               urllib.request.urlopen(urllib.request.Request(event['ResponseURL'], data=body.encode(), headers={'Content-Type': ''}, method='PUT'))
+          def register_cognito_callback(pool_id, client_id, domain):
+              # Append https://<cloudfront-domain>/app to the client's callback/logout
+              # URLs so the OAuth Authorization Code flow works from the deployed UI.
+              # Best-effort: never fail the stack over this (manual add is documented).
+              if not (pool_id and client_id and domain):
+                  print('skip cognito callback: missing pool/client/domain'); return
+              c = boto3.client('cognito-idp')
+              try:
+                  cur = c.describe_user_pool_client(UserPoolId=pool_id, ClientId=client_id)['UserPoolClient']
+              except Exception as e:
+                  print(f'describe_user_pool_client failed: {e}'); return
+              app_url = f'https://{domain}/app'
+              cbs = list(cur.get('CallbackURLs') or []); los = list(cur.get('LogoutURLs') or [])
+              changed = False
+              for u in (app_url, app_url + '/'):
+                  if u not in cbs: cbs.append(u); changed = True
+                  if u not in los: los.append(u); changed = True
+              if not changed:
+                  print('cognito client already allows the CloudFront /app URL'); return
+              args = {'UserPoolId': pool_id, 'ClientId': client_id, 'CallbackURLs': cbs, 'LogoutURLs': los}
+              # Re-pass fields update_user_pool_client would otherwise CLEAR (notably
+              # ExplicitAuthFlows — losing it breaks USER_PASSWORD_AUTH login).
+              for f in ('AllowedOAuthFlows','AllowedOAuthScopes','AllowedOAuthFlowsUserPoolClient','SupportedIdentityProviders','ExplicitAuthFlows','ClientName','ReadAttributes','WriteAttributes'):
+                  if f in cur: args[f] = cur[f]
+              try:
+                  c.update_user_pool_client(**args); print(f'added {app_url} to cognito client {client_id}')
+              except Exception as e:
+                  print(f'update_user_pool_client failed: {e}')
           def handler(event, context):
               if event['RequestType'] == 'Delete':
                   send(event, context, 'SUCCESS')
@@ -675,6 +716,7 @@ Resources:
                   secret = boto3.client('secretsmanager').get_secret_value(SecretId=p['SecretId'])
                   password = json.loads(secret['SecretString'])['password']
                   url = f"https://{p['Domain']}/?tkn={password}&folder={p['Folder']}"
+                  register_cognito_callback(p.get('CognitoUserPoolId'), p.get('CognitoUserLoginClientId'), p.get('Domain'))
                   send(event, context, 'SUCCESS', {'Url': url})
               except Exception as e:
                   send(event, context, 'FAILED', reason=str(e))
@@ -689,6 +731,9 @@ Resources:
       SecretId: !Ref CodeEditorSecret
       Domain: !GetAtt CloudFrontDistribution.DomainName
       Folder: !Sub ${HomeFolder}/agentic-analytics
+      # Used to register https://<domain>/app as a Cognito callback (redirect_mismatch fix)
+      CognitoUserPoolId: !Ref CognitoUserPoolId
+      CognitoUserLoginClientId: !Ref CognitoUserLoginClientId
 
 Outputs:
   CodeEditorUrl:

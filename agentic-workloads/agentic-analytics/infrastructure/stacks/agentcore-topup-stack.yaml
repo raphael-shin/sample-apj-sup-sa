@@ -1484,7 +1484,11 @@ Resources:
       EnvironmentVariables:
         GATEWAY_URL: !GetAtt Gateway.GatewayUrl
         AWS_REGION: !Ref AWS::Region
-        BEDROCK_MODEL_ID: global.anthropic.claude-opus-4-8
+        # Opus 4.6: Opus 4.8/4.7 require account Containment Score >=350 to invoke
+        # (a gate separate from model access); fresh Workshop Studio sandbox accounts
+        # start below that, so 4.8 is AccessDenied for participants. 4.6-v1 has no
+        # C-Score gate and works in every fresh account.
+        BEDROCK_MODEL_ID: global.anthropic.claude-opus-4-6-v1
         BYPASS_TOOL_CONSENT: 'true'
         # --- Observability (OTEL → CloudWatch Transaction Search / aws/spans) ---
         # These activate the ADOT distro the image installs; the AgentCore Runtime

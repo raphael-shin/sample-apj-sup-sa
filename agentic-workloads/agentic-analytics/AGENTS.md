@@ -99,7 +99,7 @@ cd infrastructure/scripts && bash package_for_workshop.sh
 - **Never use global variables for request-scoped state** (prevents cross-tenant leakage on Lambda container reuse)
 - Deploy scripts must be **idempotent**: delete existing Gateway target before creating, always update IAM policies
 - Glue table names are prefixed `{db}_public_` by Crawler — strip prefix in `get_schema_context` so LLM sees real PostgreSQL names
-- Model: `global.anthropic.claude-opus-4-8` (Global CRIS)
+- Model: `global.anthropic.claude-opus-4-6-v1` (Global CRIS). NOTE: Opus 4.8/4.7 need account Containment Score ≥350 to invoke — fresh Workshop Studio sandbox accounts start below that and get AccessDenied, so the workshop pins 4.6-v1 (no C-Score gate).
 
 **Voice + mode conventions:**
 - The agent reads `payload["mode"]` (`text` | `voice`, default `text`) and follows the matching branch of the single SOP's Response Formatting section. There is no separate voice SOP and no `sop_s3_key` file-swap.

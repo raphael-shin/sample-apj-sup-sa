@@ -83,7 +83,7 @@ if GUARDRAIL_ID:
 bedrock_model = BedrockModel(**bedrock_model_kwargs)
 ```
 
-This is **native Bedrock model integration** — the guardrail is applied at the model layer, not as a separate hook. When `GUARDRAIL_ID` is set (by `deploy_guardrail.py` saving to `config.env`), every Bedrock API call automatically evaluates the guardrail. Key parameters:
+This is **native Bedrock model integration** — the guardrail is applied at the model layer, not as a separate hook. When `GUARDRAIL_ID` is set (by the Runtime's `EnvironmentVariables` you flipped in Step 8.1 — `GUARDRAIL_ID: !Ref Guardrail`), every Bedrock API call automatically evaluates the guardrail. Key parameters:
 
 - `guardrail_redact_input=True` — blocked inputs are replaced with the safe message instead of being sent to the model
 - `guardrail_latest_message=True` — only the latest user message is evaluated (not the full conversation history)

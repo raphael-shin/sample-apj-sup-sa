@@ -191,21 +191,37 @@ print("[OK] AgenticAnalytics AgentCore ready for requests")
 async def agent_invocation(payload, context):
     """Handler for agent invocation with streaming support"""
     user_message = payload.get("prompt", "No prompt found in input, please provide a prompt")
-    # Gateway token passed from UI (fetched from Cognito)
-    gateway_token = payload.get("gateway_token")
-    
+    # JWT-native inbound auth: the runtime's CustomJWTAuthorizer has already validated
+    # the caller's Cognito access token before we run, and passes it through via the
+    # runtime's RequestHeaderConfiguration allowlist. We read it from
+    # context.request_headers['Authorization'] — this is THE user identity, forwarded to
+    # the MCP Gateway for RBAC/RLS. (The UI sends it as a Bearer header, not in the payload.)
+    def _bearer_from_headers(ctx):
+        headers = getattr(ctx, "request_headers", None) or {} if ctx else {}
+        # Header name casing can vary; match case-insensitively.
+        auth = headers.get("Authorization") or headers.get("authorization")
+        if auth and auth.startswith("Bearer "):
+            return auth[len("Bearer "):].strip()
+        return auth.strip() if auth else None
+
+    gateway_token = _bearer_from_headers(context)
+
     print("AgentCore Context:\n-------\n", context)
-    print(f"Gateway token provided: {'Yes' if gateway_token else 'No'}")
+    print(f"Inbound JWT present: {'Yes' if gateway_token else 'No'}")
     print("Processing Query:\n*******\n", user_message)
-    
+
     # Pass-through for now; modify here to enrich the prompt (e.g., inject context, tenant info)
     enhanced_prompt = user_message
-    
+
     try:
         if not gateway_token:
-            raise ValueError("No gateway_token provided — user must be authenticated via UI")
+            # Should be unreachable: the runtime's JWT authorizer rejects unauthenticated
+            # calls before we run. This guards against a misconfigured request-header
+            # allowlist (token validated but not passed through).
+            raise ValueError("No Authorization header on the request — check the runtime's "
+                             "RequestHeaderConfiguration allowlist includes 'Authorization'")
         access_token = gateway_token
-        print(f"[OK] Using gateway token from UI")
+        print(f"[OK] Using validated inbound JWT for gateway auth")
         
         # Extract actor_id from JWT for memory isolation
         import base64 as _b64

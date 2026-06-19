@@ -28,17 +28,20 @@ Observability (Step 9) tells you *what happened*. Evaluation tells you *how well
 
 ### Step 10.1: Run an On-Demand Evaluation
 
-On-demand evaluation scores traces that already exist in CloudWatch (from your invocations in Step 9), copy here any session ID from what you get in Step 9:
+On-demand evaluation scores traces that already exist in CloudWatch (from your invocations in Step 9). You pass it two things: the **agent runtime id** (the `AgentRuntimeId` from `make outputs`, e.g. `agentic_analytics_agent-xxxxxxxxxx`) and a **session id** you exercised in Step 9:
 
 ::alert[**Use a session you actually exercised, and give traces a few minutes to index.** Evaluation reads spans from CloudWatch Transaction Search, which indexes a short time *after* an invocation. Use a session id from the chat UI (the GenAI dashboard's **Sessions** tab lists them) and pass it with `-s`. The agent runtime is built with OpenTelemetry auto-instrumentation (`opentelemetry-instrument` + the ADOT env on the Runtime) and the runtime role has X-Ray permissions, so agent/model/tool spans flow to `aws/spans` — that's what eval scores. If you see `No spans found`, wait ~3–5 minutes and retry, and confirm the agent emitted runtime spans (Step 9, **All spans** tab — look for `AgentCore.Runtime.*` / model spans, not just `AgentCore.Gateway.*`).]{type="warning"}
 
 ```bash
 agentcore eval run \
+  --agent-id "<AgentRuntimeId-from-make-outputs>" \
   -s "<session-Id-in-Step-9>" \
   --evaluator "Builtin.Helpfulness" \
   --evaluator "Builtin.Correctness" \
   --evaluator "Builtin.ToolSelectionAccuracy"
 ```
+
+::alert[**`--agent-id` is required.** Without it the CLI errors `No agent specified`. Use the `AgentRuntimeId` output (run `make outputs` in `app/agentcore_strands`), not the full ARN.]{type="info"}
 
 This takes 1-2 minutes. The CLI fetches recent traces and sends them to the evaluator LLM.
 
