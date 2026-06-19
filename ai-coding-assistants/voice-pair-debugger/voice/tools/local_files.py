@@ -4,9 +4,9 @@ from pathlib import Path
 
 def _safe_path(file_path: str) -> Path:
     """Resolve a path and ensure it stays within the working directory."""
-    cwd = Path.cwd()
+    cwd = Path.cwd().resolve()
     resolved = (cwd / file_path).resolve()
-    if not str(resolved).startswith(str(cwd)):
+    if not resolved.is_relative_to(cwd):
         raise ValueError(f"Access denied: {file_path} is outside the project directory.")
     return resolved
 
@@ -42,7 +42,7 @@ async def list_files(params, directory: str = ".", max_depth: int = 3):
             return
 
         files = []
-        cwd = Path.cwd()
+        cwd = Path.cwd().resolve()
         for root, dirs, filenames in os.walk(base):
             depth = len(Path(root).relative_to(base).parts)
             if depth >= max_depth:
