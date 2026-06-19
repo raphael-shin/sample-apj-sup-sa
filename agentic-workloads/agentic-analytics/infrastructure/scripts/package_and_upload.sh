@@ -119,22 +119,92 @@ echo "  bedrock_kb_ingestion: $BEDROCK_KEY"
 OBSERVABILITY_KEY=$(package_lambda "observability_setup" "$INFRA_DIR/custom-resource-lambdas/observability_setup")
 echo "  observability_setup: $OBSERVABILITY_KEY"
 
-# Package agentcore_gateway (demo mode only)
+# Package demo-mode artifacts (agent code, datafoundation Lambda, psycopg2 layer, amplify)
 if [ "$DEPLOY_MODE" != "workshop" ]; then
-    echo "Packaging agentcore_gateway (with policy/interceptor scripts)..."
-    AGENTCORE_DIR="$INFRA_DIR/custom-resource-lambdas/agentcore_gateway"
-    cp "$PROJECT_ROOT/app/agentcore_strands/deploy_policy.py" "$AGENTCORE_DIR/"
-    cp "$PROJECT_ROOT/app/agentcore_strands/deploy_interceptor.py" "$AGENTCORE_DIR/"
-    AGENTCORE_KEY=$(package_lambda "agentcore_gateway" "$AGENTCORE_DIR" handler.py deploy_policy.py deploy_interceptor.py)
-    rm -f "$AGENTCORE_DIR/deploy_policy.py" "$AGENTCORE_DIR/deploy_interceptor.py"
-    echo "  agentcore_gateway: $AGENTCORE_KEY"
-
-    # Package datafoundation Lambda
+    # Package datafoundation Lambda (tools for Gateway target)
     echo "Packaging datafoundation Lambda..."
     cd "$PROJECT_ROOT/app/agentcore_strands"
-    zip -j "$TEMP_DIR/datafoundation_lambda.zip" datafoundation_lambda.py > /dev/null
+    zip -j "$TEMP_DIR/datafoundation_lambda.zip" tools/prebaked_sql_toolset_lambda.py > /dev/null
     aws s3 cp "$TEMP_DIR/datafoundation_lambda.zip" "s3://$BUCKET/$(s3_path "lambda/datafoundation_lambda.zip")" --region $REGION > /dev/null
     echo "  datafoundation: lambda/datafoundation_lambda.zip"
+
+    # Package additional tool Lambdas (api_integration, custom_sql, semantic_layer)
+    package_tool_lambda() {
+        local short=$1
+        local source_file=$2
+        local pkg_dir="$TEMP_DIR/${short}_pkg"
+        mkdir -p "$pkg_dir"
+        cp "$PROJECT_ROOT/app/agentcore_strands/tools/$source_file" "$pkg_dir/"
+        (cd "$pkg_dir" && zip -r "$TEMP_DIR/${short}.zip" . > /dev/null)
+        if command -v sha256sum &> /dev/null; then
+            HASH=$(sha256sum "$TEMP_DIR/${short}.zip" | cut -c1-8)
+        else
+            HASH=$(shasum -a 256 "$TEMP_DIR/${short}.zip" | cut -c1-8)
+        fi
+        local key="lambdas/${short}-${HASH}.zip"
+        aws s3 cp "$TEMP_DIR/${short}.zip" "s3://$BUCKET/$(s3_path "$key")" --region $REGION > /dev/null
+        echo "$key"
+    }
+
+    echo "Packaging api_integration_toolset Lambda..."
+    API_INTEG_KEY=$(package_tool_lambda "api_integration_toolset" "api_integration_toolset_lambda.py")
+    echo "  api_integration_toolset: $API_INTEG_KEY"
+
+    echo "Packaging custom_sql_toolset Lambda..."
+    CUSTOM_SQL_KEY=$(package_tool_lambda "custom_sql_toolset" "custom_sql_toolset_lambda.py")
+    echo "  custom_sql_toolset: $CUSTOM_SQL_KEY"
+
+    echo "Packaging semantic_layer_toolset Lambda..."
+    SEMANTIC_LAYER_KEY=$(package_tool_lambda "semantic_layer_toolset" "semantic_layer_toolset_lambda.py")
+    echo "  semantic_layer_toolset: $SEMANTIC_LAYER_KEY"
+
+    # Package gateway interceptor Lambda (propagates Authorization header to targets)
+    echo "Packaging gateway interceptor Lambda..."
+    INTERCEPTOR_PKG="$TEMP_DIR/interceptor_pkg"
+    mkdir -p "$INTERCEPTOR_PKG"
+    cp "$PROJECT_ROOT/app/agentcore_strands/infra/interceptor_lambda.py" "$INTERCEPTOR_PKG/"
+    cd "$INTERCEPTOR_PKG"
+    zip -r "$TEMP_DIR/gateway_interceptor.zip" . > /dev/null
+    if command -v sha256sum &> /dev/null; then
+        HASH=$(sha256sum "$TEMP_DIR/gateway_interceptor.zip" | cut -c1-8)
+    else
+        HASH=$(shasum -a 256 "$TEMP_DIR/gateway_interceptor.zip" | cut -c1-8)
+    fi
+    INTERCEPTOR_KEY="lambdas/gateway_interceptor-${HASH}.zip"
+    aws s3 cp "$TEMP_DIR/gateway_interceptor.zip" "s3://$BUCKET/$(s3_path "$INTERCEPTOR_KEY")" --region $REGION > /dev/null
+    echo "  gateway_interceptor: $INTERCEPTOR_KEY"
+
+    # Package agent code ZIP for AgentCore Runtime (CodeConfiguration)
+    echo "Packaging agent code for AgentCore Runtime..."
+    cd "$PROJECT_ROOT/app/agentcore_strands"
+    zip -r "$TEMP_DIR/agent_code.zip" \
+        unicorn_rental_agent.py \
+        unicorn_rental_analytics.sop.md \
+        requirements.txt \
+        config.env.sample \
+        -x "*.pyc" "*__pycache__*" > /dev/null
+    aws s3 cp "$TEMP_DIR/agent_code.zip" "s3://$BUCKET/$(s3_path "agent/agent_code.zip")" --region $REGION > /dev/null
+    echo "  agent_code: agent/agent_code.zip"
+
+    # Package psycopg2 Lambda layer
+    echo "Packaging psycopg2 Lambda layer..."
+    LAYER_DIR="$TEMP_DIR/psycopg2_layer/python"
+    mkdir -p "$LAYER_DIR"
+    pip3 download psycopg2-binary \
+        --platform manylinux2014_x86_64 \
+        --only-binary=:all: \
+        --python-version 312 \
+        -d "$TEMP_DIR/psycopg2_downloads" 2>/dev/null
+    WHEEL=$(ls "$TEMP_DIR/psycopg2_downloads"/*.whl 2>/dev/null | head -1)
+    if [ -n "$WHEEL" ]; then
+        unzip -q "$WHEEL" -d "$LAYER_DIR"
+        cd "$TEMP_DIR/psycopg2_layer"
+        zip -r "$TEMP_DIR/psycopg2-py312.zip" python > /dev/null
+        aws s3 cp "$TEMP_DIR/psycopg2-py312.zip" "s3://$BUCKET/$(s3_path "layers/psycopg2-py312.zip")" --region $REGION > /dev/null
+        echo "  psycopg2 layer: layers/psycopg2-py312.zip"
+    else
+        echo "  WARNING: Could not download psycopg2-binary wheel. Provide Psycopg2LayerArn param manually."
+    fi
 
     # Package amplify_hosting Lambda
     echo "Packaging amplify_hosting (with common/ utilities)..."
@@ -154,9 +224,12 @@ if [ "$DEPLOY_MODE" != "workshop" ]; then
     aws s3 cp "$TEMP_DIR/amplify_hosting.zip" "s3://$BUCKET/$(s3_path "$AMPLIFY_KEY")" --region $REGION > /dev/null
     echo "  amplify_hosting: $AMPLIFY_KEY"
 else
-    echo "Skipping agentcore_gateway, datafoundation, amplify_hosting (workshop-only mode)"
-    AGENTCORE_KEY="N/A"
+    echo "Skipping demo-mode artifacts (workshop-only mode)"
     AMPLIFY_KEY="N/A"
+    INTERCEPTOR_KEY="N/A"
+    API_INTEG_KEY="N/A"
+    CUSTOM_SQL_KEY="N/A"
+    SEMANTIC_LAYER_KEY="N/A"
 fi
 
 echo "Uploading templates..."
@@ -171,6 +244,7 @@ aws s3 cp amplify-stack.yaml "s3://$BUCKET/$(s3_path "templates/amplify-stack.ya
 aws s3 cp cognito-stack.yaml "s3://$BUCKET/$(s3_path "templates/cognito-stack.yaml")" --region $REGION > /dev/null
 aws s3 cp code-editor-stack.yaml "s3://$BUCKET/$(s3_path "templates/code-editor-stack.yaml")" --region $REGION > /dev/null
 aws s3 cp observability-stack.yaml "s3://$BUCKET/$(s3_path "templates/observability-stack.yaml")" --region $REGION > /dev/null
+aws s3 cp cube-stack.yaml "s3://$BUCKET/$(s3_path "templates/cube-stack.yaml")" --region $REGION > /dev/null
 
 echo "Uploading schema and data..."
 aws s3 cp "$PROJECT_ROOT/dataset/schema/schema.sql" "s3://$BUCKET/$(s3_path "schema/schema.sql")" --region $REGION > /dev/null
@@ -188,6 +262,7 @@ if [ ! -f "$DRIVER_PATH" ]; then
 fi
 aws s3 cp "$DRIVER_PATH" "s3://$BUCKET/$(s3_path "drivers/postgresql-42.7.3.jar")" --region $REGION > /dev/null
 
+UI_BUILD_KEY="ui/build.zip"
 if [ "$DEPLOY_MODE" != "workshop" ]; then
     echo "Building and uploading UI..."
     UI_DIR="$PROJECT_ROOT/app/ui"
@@ -195,12 +270,19 @@ if [ "$DEPLOY_MODE" != "workshop" ]; then
         cd "$UI_DIR"
         npm install --silent
         npm run build --silent
-        
-        # Create ZIP of build directory
+
+        # Create ZIP of build directory and hash-version it so a UI source
+        # change triggers a custom resource Update on subsequent deploys.
         cd build
         zip -r "$TEMP_DIR/ui-build.zip" . > /dev/null
-        aws s3 cp "$TEMP_DIR/ui-build.zip" "s3://$BUCKET/$(s3_path "ui/build.zip")" --region $REGION > /dev/null
-        echo "  Uploaded UI build"
+        if command -v sha256sum &> /dev/null; then
+            UI_HASH=$(sha256sum "$TEMP_DIR/ui-build.zip" | cut -c1-8)
+        else
+            UI_HASH=$(shasum -a 256 "$TEMP_DIR/ui-build.zip" | cut -c1-8)
+        fi
+        UI_BUILD_KEY="ui/build-${UI_HASH}.zip"
+        aws s3 cp "$TEMP_DIR/ui-build.zip" "s3://$BUCKET/$(s3_path "$UI_BUILD_KEY")" --region $REGION > /dev/null
+        echo "  Uploaded UI build: $UI_BUILD_KEY"
     else
         echo "  Warning: UI directory not found at $UI_DIR, skipping UI build"
     fi
@@ -229,9 +311,14 @@ echo "Lambda S3 Keys:"
 echo "  DatabaseInitLambdaKey=$DB_INIT_KEY"
 echo "  GlueCrawlerLambdaKey=$GLUE_KEY"
 echo "  BedrockKBLambdaKey=$BEDROCK_KEY"
-echo "  AgentCoreLambdaKey=$AGENTCORE_KEY"
 echo "  AmplifyLambdaKey=$AMPLIFY_KEY"
+echo "  InterceptorLambdaKey=$INTERCEPTOR_KEY"
+echo "  ApiIntegLambdaKey=$API_INTEG_KEY"
+echo "  CustomSqlLambdaKey=$CUSTOM_SQL_KEY"
+echo "  SemanticLayerLambdaKey=$SEMANTIC_LAYER_KEY"
 echo "  ObservabilityLambdaKey=$OBSERVABILITY_KEY"
+echo "  AgentCodeS3Key=agent/agent_code.zip"
+echo "  UIBuildKey=$UI_BUILD_KEY"
 echo ""
 
 if [ "$WORKSHOP_STUDIO" = true ]; then
@@ -246,16 +333,22 @@ fi
 
 echo "Deploy command:"
 echo "aws cloudformation create-stack \\"
-echo "  --stack-name agentic-analytics-workshop \\"
+echo "  --stack-name agentic-analytics-$DEPLOY_MODE \\"
 echo "  --template-url $TEMPLATE_URL \\"
 echo "  --parameters \\"
 echo "      ParameterKey=ArtifactsBucket,ParameterValue=$ARTIFACTS_BUCKET \\"
-echo "      ParameterKey=DeployMode,ParameterValue=workshop \\"
+echo "      ParameterKey=DeployMode,ParameterValue=$DEPLOY_MODE \\"
+echo "      ParameterKey=DeployCube,ParameterValue=false \\"
 echo "      ParameterKey=DatabaseInitLambdaKey,ParameterValue=$DB_INIT_KEY \\"
 echo "      ParameterKey=GlueCrawlerLambdaKey,ParameterValue=$GLUE_KEY \\"
 echo "      ParameterKey=BedrockKBLambdaKey,ParameterValue=$BEDROCK_KEY \\"
-echo "      ParameterKey=AgentCoreLambdaKey,ParameterValue=$AGENTCORE_KEY \\"
+echo "      ParameterKey=AgentCodeS3Key,ParameterValue=agent/agent_code.zip \\"
 echo "      ParameterKey=AmplifyLambdaKey,ParameterValue=$AMPLIFY_KEY \\"
+echo "      ParameterKey=InterceptorLambdaKey,ParameterValue=$INTERCEPTOR_KEY \\"
+echo "      ParameterKey=ApiIntegLambdaKey,ParameterValue=$API_INTEG_KEY \\"
+echo "      ParameterKey=CustomSqlLambdaKey,ParameterValue=$CUSTOM_SQL_KEY \\"
+echo "      ParameterKey=SemanticLayerLambdaKey,ParameterValue=$SEMANTIC_LAYER_KEY \\"
 echo "      ParameterKey=ObservabilityLambdaKey,ParameterValue=$OBSERVABILITY_KEY \\"
+echo "      ParameterKey=UIBuildKey,ParameterValue=$UI_BUILD_KEY \\"
 echo "  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \\"
 echo "  --region $DEPLOY_REGION"

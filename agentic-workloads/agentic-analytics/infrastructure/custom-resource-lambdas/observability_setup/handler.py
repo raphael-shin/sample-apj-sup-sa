@@ -54,12 +54,18 @@ def enable_transaction_search(account_id):
     print("[OK] Resource policy created")
 
     # 2. Route trace segments to CloudWatch Logs
-    xray.update_trace_segment_destination(Destination='CloudWatchLogs')
-    print("[OK] Trace segment destination set to CloudWatchLogs")
+    try:
+        xray.update_trace_segment_destination(Destination='CloudWatchLogs')
+        print("[OK] Trace segment destination set to CloudWatchLogs")
+    except xray.exceptions.InvalidRequestException:
+        print("[OK] Trace segment destination already set to CloudWatchLogs")
 
     # 3. Set indexing to 100%
-    xray.update_indexing_rule(Name='Default', Rule={'Probabilistic': {'DesiredSamplingPercentage': 100}})
-    print("[OK] Indexing rule set to 100%")
+    try:
+        xray.update_indexing_rule(Name='Default', Rule={'Probabilistic': {'DesiredSamplingPercentage': 100}})
+        print("[OK] Indexing rule set to 100%")
+    except xray.exceptions.InvalidRequestException:
+        print("[OK] Indexing rule already set")
 
 
 def lambda_handler(event, context):

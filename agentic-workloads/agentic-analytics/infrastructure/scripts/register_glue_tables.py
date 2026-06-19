@@ -9,7 +9,7 @@ import os
 AWS_REGION = os.environ.get('AWS_REGION', 'us-west-2')
 DATABASE_NAME = 'timely_unicorn'
 JDBC_CONNECTION = 'agentic-analytics-aurora-connection-v2'
-AURORA_ENDPOINT = 'agentic-analytics-cluster.cluster-c7agmam40f74.us-west-2.rds.amazonaws.com'
+AURORA_ENDPOINT = 'agentic-analytics-cluster.cluster-xxxxxxxxxxxx.us-west-2.rds.amazonaws.com'
 
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
