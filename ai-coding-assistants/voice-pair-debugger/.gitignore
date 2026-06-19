@@ -1,4 +1,5 @@
 .env
+.venv
 
 sample-app/.terraform/
 sample-app/terraform.tfstate*

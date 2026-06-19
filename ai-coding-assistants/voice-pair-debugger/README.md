@@ -1,7 +1,7 @@
 # Voice: voice pair debugger for AWS
 
 `Voice` is a voice-driven AI agent that helps developers debug AWS applications through conversation.
-You run it, open a browser tab, and talk to it. `Voice` listens, reasons with a model on Amazon Bedrock, inspects your live AWS resources and local source, then narrates the root cause and the suggested fix.
+You run it, open a browser tab, and talk to it. `Voice` listens, reasons with a model on Amazon Bedrock, inspects your live AWS resources and local source, then narrates the root cause and prints a suggested code snippet to your terminal.
 
 It is built with [Pipecat](https://github.com/pipecat-ai/pipecat) for the real-time voice pipeline, Deepgram for speech-to-text and text-to-speech, and Amazon Bedrock (Claude) for reasoning and tool use.
 
@@ -20,7 +20,7 @@ graph LR
     TOOLS -->|results| LLM
 ```
 
-The model has five tools available:
+The model has six tools available:
 
 | Tool                       | Purpose                                  | AWS API                           |
 | -------------------------- | ---------------------------------------- | --------------------------------- |
@@ -29,6 +29,7 @@ The model has five tools available:
 | `describe_lambda_function` | Read a function's config and environment  | `lambda:GetFunctionConfiguration`  |
 | `read_file`                 | Read a file from the local project        | local, none                       |
 | `list_files`                | List files in the project tree            | local, none                       |
+| `show_code_suggestion`      | Print a fix snippet to the terminal       | local, none                       |
 
 See [architecture.md](architecture.md) for the full design, diagrams, and component breakdown.
 
@@ -54,7 +55,7 @@ cp .env.example .env
 uv run bot.py
 ```
 
-Then open `http://localhost:7860/client` in your browser, grant microphone permission, and start talking. The terminal shows the conversation transcript and logs.
+Then open `http://localhost:7860/client` in your browser, grant microphone permission, and start talking. The browser UI shows the conversation transcript. The terminal stays quiet by default; set `LOG_LEVEL=DEBUG` to see Pipecat's pipeline logs.
 
 To target a specific AWS region or profile, set the standard AWS environment variables:
 
@@ -77,7 +78,11 @@ terraform init
 terraform apply
 ```
 
-Invoke the endpoints to generate some failing requests, then run `Voice` and describe a symptom.
+Invoke the endpoints to generate some failing requests, then run `Voice` and describe a symptom. The included `sample-app/generate-traffic.sh` hits every endpoint for you (it reads the API URL from `terraform output`), seeding the logs with the planted errors:
+
+```bash
+./sample-app/generate-traffic.sh
+```
 
 Run `terraform destroy` when you are done.
 
@@ -136,6 +141,7 @@ All configuration is via environment variables, loaded from `.env`. See [.env.ex
 | `AWS_PROFILE`        | No       | none                             | Named profile from `~/.aws/config`   |
 | `BEDROCK_MODEL_ID`   | No       | `us.anthropic.claude-sonnet-4-6` | Bedrock model or inference profile  |
 | `DEEPGRAM_TTS_VOICE` | No       | `aura-2-draco-en`                | Deepgram Aura-2 voice              |
+| `LOG_LEVEL`          | No       | `ERROR`                          | Console log level; set `DEBUG` to see Pipecat pipeline logs |
 
 ## Security
 

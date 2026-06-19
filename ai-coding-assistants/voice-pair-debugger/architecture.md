@@ -25,7 +25,7 @@ sequenceDiagram
     participant AWS as AWS APIs (boto3)
 
     Dev->>Voice: runs `voice`
-    Voice->>Dev: "What are you seeing?" (audio)
+    Voice->>Dev: "Hey, I'm Voice, your debugging partner..." (audio)
     Dev->>Voice: describes problem (voice)
     Voice->>DG: audio stream
     DG->>Voice: transcription
@@ -40,7 +40,7 @@ sequenceDiagram
     Dev->>Voice: answers (voice)
     Note over Voice,LLM: Loop until root cause identified
     LLM->>Voice: root cause + suggested fix (text)
-    Voice->>Dev: narrates fix (audio); transcript shown in terminal
+    Voice->>Dev: narrates fix (audio) + prints snippet to terminal
 ```
 
 ## Architecture
@@ -93,8 +93,8 @@ For local use this is the simplest path: open a browser tab and talk. Running
 
 **Alternative for a CLI-native feel**: wrap the Pipecat dev runner in a
 terminal command that also opens the browser. The developer still speaks into
-the browser, while the terminal shows the conversation transcript and log
-output.
+the browser, the browser UI shows the conversation transcript, and the terminal
+shows logs.
 
 ### AWS credentials
 
@@ -121,8 +121,8 @@ Reasons:
 ### Does Voice write code?
 
 **No.** Voice narrates the root cause and suggests where/what to
-change. It describes the change while speaking; the conversation transcript
-appears in the terminal.
+change. It describes the change while speaking and prints the snippet to the
+terminal via `show_code_suggestion`; it does not modify your files.
 
 **Future:** could write a patch file, open a PR, or apply changes via an editor
 integration. Out of scope for now.
@@ -135,8 +135,9 @@ uv run bot.py    # start server, open browser at localhost:7860/client
 
 Region and profile come from the environment (`AWS_REGION`, `AWS_PROFILE`) or
 `.env`, read by `config.py`. The developer runs `uv run bot.py`, a browser tab
-opens for mic/speaker access via WebRTC, and the terminal shows the conversation
-transcript and logs.
+opens for mic/speaker access via WebRTC, the browser UI shows the conversation
+transcript, and the terminal shows logs (quiet by default; `LOG_LEVEL=DEBUG`
+for the full Pipecat output).
 
 ## Component breakdown
 
@@ -148,6 +149,7 @@ graph LR
         B --> D[tools/xray.py]
         B --> E[tools/lambda_tools.py]
         B --> F[tools/local_files.py]
+        B --> J[tools/display.py]
         A --> G[config.py]
         B --> I[prompt.md]
     end
@@ -166,6 +168,7 @@ graph LR
 | `tools/xray.py`         | get_xray_trace_summaries                         |
 | `tools/lambda_tools.py` | describe_lambda_function                         |
 | `tools/local_files.py`   | read_file, list_files                              |
+| `tools/display.py`      | show_code_suggestion (prints a fix to the terminal) |
 
 ## Interaction model
 
@@ -202,7 +205,7 @@ turn detection and barge-in natively.
 1. A bug exists: a Lambda function reads from DynamoDB but uses the wrong
    key attribute name. It returns 500 on the `/users` endpoint.
 2. Developer runs `voice`.
-3. Voice: "What are you seeing?"
+3. Voice: "Hey, I'm Voice, your debugging partner. What are you running into?"
 4. Developer: "My /users API is returning 500 errors."
 5. Voice fetches CloudWatch logs for the API Gateway + Lambda.
 6. Voice: "I see an error about a missing 'userId' attribute in the Lambda. The
@@ -210,7 +213,7 @@ turn detection and barge-in natively.
    that attribute?"
 7. Developer: "Oh, I refactored the model yesterday."
 8. Voice: "That's the issue. In `get_users.mjs`, change `item.userId` to
-   `item.user_id`." (spoken; the transcript shows in the terminal)
+   `item.user_id`." (spoken; the transcript also appears in the browser UI)
 9. Done in under 90 seconds. Fully voice-driven.
 
 ## Planted bugs

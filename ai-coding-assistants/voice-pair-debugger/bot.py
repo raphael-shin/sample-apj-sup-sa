@@ -5,17 +5,36 @@ Then open http://localhost:7860/client in your browser.
 """
 
 import sys
-import logging
 
 from loguru import logger
+from uvicorn.config import LOGGING_CONFIG
 
-# Suppress all pipecat debug/warning noise; only show errors
+from voice.config import LOG_LEVEL
+
+# Pipecat's dev runner calls logger.add(sys.stderr, level="DEBUG") inside its
+# main(), overriding any level we set and flooding the console. Wrap logger.add
+# so the console sink is always clamped to LOG_LEVEL, whoever adds it and
+# whenever. Installed before importing Pipecat so import-time logs are caught.
+_original_logger_add = logger.add
+
+
+def _clamped_add(sink, *args, **kwargs):
+    if sink is sys.stderr or sink is sys.stdout:
+        kwargs["level"] = LOG_LEVEL
+    return _original_logger_add(sink, *args, **kwargs)
+
+
+logger.add = _clamped_add
+
 logger.remove()
-logger.add(sys.stderr, level="ERROR")
+logger.add(sys.stderr, level=LOG_LEVEL)
 
-# Silence uvicorn access logs
-logging.getLogger("uvicorn.access").setLevel(logging.ERROR)
-logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
+# Quiet uvicorn's startup banner and per-request access logs. uvicorn re-applies
+# its own logging config when the server starts, so set the levels on the config
+# dict uvicorn.run reads, not on the loggers (which would be overwritten).
+_uvicorn_level = LOG_LEVEL if LOG_LEVEL in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"} else "WARNING"
+for _name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    LOGGING_CONFIG["loggers"][_name]["level"] = _uvicorn_level
 
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport

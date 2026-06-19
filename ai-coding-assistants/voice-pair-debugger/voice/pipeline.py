@@ -24,7 +24,14 @@ from voice.config import (
 )
 from voice.tools import get_tools_schema, register_tools
 
-SYSTEM_PROMPT = (Path(__file__).parent / "prompt.md").read_text(encoding="utf-8")
+
+def _load_text(name: str) -> str:
+    """Load a prompt asset (e.g. prompt.md, greeting.md) from this package."""
+    return (Path(__file__).parent / name).read_text(encoding="utf-8").strip()
+
+
+SYSTEM_PROMPT = _load_text("prompt.md")
+GREETING = _load_text("greeting.md")
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
@@ -80,9 +87,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         # Greet first so the developer is not met with silence.
-        await agent.queue_frame(
-            TTSSpeakFrame(text="What are you seeing?", append_to_context=True)
-        )
+        await agent.queue_frame(TTSSpeakFrame(text=GREETING, append_to_context=True))
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
