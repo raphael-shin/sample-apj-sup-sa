@@ -49,6 +49,8 @@ User logs in → Cognito JWT (custom:role [for role-based access control], custo
 
 ### Step 7.1: Add Cedar Policies (TODO 7.1)
 
+::alert[**Complete Steps 4, 5, and 6 first.** Two of the Cedar policies guard tools from those steps — `ForbidWriteAnalystPolicy` depends on the Step-5 booking target and `ForbidCustomSqlStaffPolicy` on the Step-6 Custom SQL target. If you uncomment Step 7a before those targets exist, `make deploy` fails with `Unresolved resource dependencies [ApiIntegTarget]` (or `[CustomSqlTarget]`). Deploy the toolset steps in order, then return here.]{type="warning"}
+
 :link[AgentCore Policy]{href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy.html"} uses :link[Cedar]{href="https://www.cedarpolicy.com/"}, a policy language created by AWS. Cedar policies are **deterministic** — unlike prompt-based restrictions, they use formal logic for safeguarding against prompt injection.
 
 Open :code[/workshop/agentic-analytics/app/agentcore_strands/agentcore-topup-stack.yaml]{showCopyAction=true}. **Step 7a has TWO fences you must uncomment** — both are labelled `Step 7a`:
