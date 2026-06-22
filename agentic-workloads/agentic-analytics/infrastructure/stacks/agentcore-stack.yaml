@@ -573,10 +573,19 @@ Resources:
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
+                  # The 3 SQL/API tools are invoked via their 'live' alias (provisioned
+                  # concurrency). In IAM a Lambda alias ARN (…:function:name:live) is a
+                  # DISTINCT resource from the unqualified function ARN, so the Gateway
+                  # role must be granted on the alias — otherwise AgentCore reports
+                  # "Gateway execution role lacks permission to invoke …:live". Keep the
+                  # unqualified ARNs too (Interceptor has no alias; harmless for the rest).
                   - !GetAtt DataFoundationLambda.Arn
+                  - !Ref DataFoundationAlias
                   - !GetAtt InterceptorLambda.Arn
                   - !GetAtt ApiIntegLambda.Arn
+                  - !Ref ApiIntegAlias
                   - !GetAtt CustomSqlLambda.Arn
+                  - !Ref CustomSqlAlias
                   - !If
                     - HasSemanticLayer
                     - !GetAtt SemanticLayerLambda.Arn
