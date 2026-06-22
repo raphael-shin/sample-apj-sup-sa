@@ -43,10 +43,13 @@ PY
 
 ZIP="$(mktemp -d)/ui.zip"
 ( cd "$BUILD" && zip -r -q "$ZIP" . -x "*.DS_Store" )
-python3 - "$APP_ID" "$BRANCH" "$ZIP" <<'PY'
+python3 - "$APP_ID" "$BRANCH" "$ZIP" "$REGION" <<'PY'
 import boto3, sys, urllib.request, time
 app, branch, zip_path = sys.argv[1], sys.argv[2], sys.argv[3]
-c = boto3.client("amplify")
+region = sys.argv[4] if len(sys.argv) > 4 else None
+# Explicit region: this script may run without AWS_DEFAULT_REGION exported, and an
+# unregioned amplify client raises NoRegionError.
+c = boto3.client("amplify", region_name=region)
 r = c.create_deployment(appId=app, branchName=branch)
 with open(zip_path, "rb") as f:
     urllib.request.urlopen(urllib.request.Request(r["zipUploadUrl"], data=f.read(), method="PUT", headers={"Content-Type": "application/zip"}))
