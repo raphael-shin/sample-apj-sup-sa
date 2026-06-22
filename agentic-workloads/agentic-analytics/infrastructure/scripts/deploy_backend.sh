@@ -192,7 +192,7 @@ if [ "$VOICE_ONLY" = true ]; then
 
   # The voice CodeBuild reads its source from the (hash-versioned) key wired at
   # stack-create; upload to THAT exact key so the rebuild picks up our new code.
-  VOICE_SRC_LOC="$(aws codebuild batch-get-projects --names "${ENV_NAME}-voice-build" \
+  VOICE_SRC_LOC="$(aws codebuild batch-get-projects --names "${ENV_NAME}-voice-agentcore-build" \
     --region "$REGION" --query 'projects[0].source.location' --output text 2>/dev/null)"
   [ -n "$VOICE_SRC_LOC" ] && [ "$VOICE_SRC_LOC" != "None" ] || die "voice-build project source not found — is voice deployed (VoiceMode=agentcore)?"
   VOICE_KEY="${VOICE_SRC_LOC#*/}"   # strip "bucket/" → the S3 key
@@ -209,9 +209,9 @@ if [ "$VOICE_ONLY" = true ]; then
   aws s3 cp "$VOICE_ZIP" "s3://${BUCKET}/${VOICE_KEY}" --region "$REGION"
   rm -f "$VOICE_ZIP"
 
-  log "[voice-only] Triggering CodeBuild project ${ENV_NAME}-voice-build"
+  log "[voice-only] Triggering CodeBuild project ${ENV_NAME}-voice-agentcore-build"
   BUILD_ID="$(aws codebuild start-build \
-    --project-name "${ENV_NAME}-voice-build" \
+    --project-name "${ENV_NAME}-voice-agentcore-build" \
     --region "$REGION" \
     --query 'build.id' --output text)"
   log "[voice-only] Build ${BUILD_ID} started — waiting (~5-10 min, arm64 aiortc/numba)…"

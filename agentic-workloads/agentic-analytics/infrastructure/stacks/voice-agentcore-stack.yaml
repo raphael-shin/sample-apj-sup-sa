@@ -138,7 +138,11 @@ Resources:
   VoiceBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub ${EnvironmentName}-voice-build
+      # -voice-agentcore-build (not -voice-build): the legacy fargate VoiceStack names
+      # its CodeBuild project ${EnvironmentName}-voice-build. During the fargate->agentcore
+      # migration both stacks briefly coexist (CFN creates the new nested stack before
+      # deleting the old one), so an identical name collides with "already exists".
+      Name: !Sub ${EnvironmentName}-voice-agentcore-build
       ServiceRole: !GetAtt VoiceCodeBuildRole.Arn
       Environment:
         Type: ARM_CONTAINER
@@ -221,7 +225,9 @@ Resources:
   VoiceBuildTriggerFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub ${EnvironmentName}-voice-build-trigger
+      # -voice-agentcore-build-trigger: same migration-coexistence reason as
+      # VoiceBuildProject above (legacy VoiceStack uses ${EnvironmentName}-voice-build-trigger).
+      FunctionName: !Sub ${EnvironmentName}-voice-agentcore-build-trigger
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt VoiceBuildTriggerRole.Arn
