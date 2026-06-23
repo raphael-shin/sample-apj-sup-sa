@@ -113,31 +113,32 @@ def test_offer_reads_token_from_headers(monkeypatch):
     assert captured["runtime_session_id"] == "shared-sess-abc"
 
 
-def test_offer_body_token_is_fallback_when_no_header(monkeypatch):
-    """Backward-compat: if no Authorization header is present, a body gateway_token
-    is still honoured (covers the deploy window before the proxy update lands)."""
+def test_offer_no_header_yields_no_token(monkeypatch):
+    """The header is the ONLY identity channel: with no Authorization header the
+    token is None, even if a (now-unused) gateway_token sits in the body. The body
+    copy was retired — a stray body token must NOT be honoured."""
     captured = _install_common_stubs(monkeypatch)
     monkeypatch.setattr(bot, "SmallWebRTCRequestHandler", _FakeHandler)
 
-    payload = {"type": "offer", "data": {"gateway_token": "legacy-body-jwt",
+    payload = {"type": "offer", "data": {"gateway_token": "stray-body-jwt",
                                          "runtimeSessionId": "shared-sess-abc"}}
     asyncio.run(_drain(bot.agentcore_entrypoint(payload, None)))
 
-    assert captured["user_token"] == "legacy-body-jwt"
+    assert captured["user_token"] is None
     assert captured["runtime_session_id"] == "shared-sess-abc"
 
 
-def test_offer_header_takes_precedence_over_body(monkeypatch):
-    """If both are present, the header wins (the body copy is being retired)."""
+def test_offer_ignores_body_token(monkeypatch):
+    """A body gateway_token is ignored entirely; only the header is read."""
     captured = _install_common_stubs(monkeypatch)
     monkeypatch.setattr(bot, "SmallWebRTCRequestHandler", _FakeHandler)
 
-    ctx = _FakeContext({"authorization": "Bearer header-wins"})
-    payload = {"type": "offer", "data": {"gateway_token": "body-loses",
+    ctx = _FakeContext({"authorization": "Bearer header-token"})
+    payload = {"type": "offer", "data": {"gateway_token": "body-ignored",
                                          "runtimeSessionId": "s"}}
     asyncio.run(_drain(bot.agentcore_entrypoint(payload, ctx)))
 
-    assert captured["user_token"] == "header-wins"
+    assert captured["user_token"] == "header-token"
 
 
 def test_ice_candidates_dispatch(monkeypatch):

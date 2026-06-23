@@ -372,17 +372,17 @@ if _VOICE_RUNTIME_MODE == "agentcore":
         The per-user JWT is read from the request headers (context.request_headers
         ['Authorization'], validated by the runtime's JWT authorizer and passed
         through via the header allowlist) — same as the Strands agent. The shared
-        runtimeSessionId still travels in the offer body. (For backward-compat during
-        a rollout, a gateway_token in the body is honoured as a fallback, but the
-        signaling proxy no longer sends one.)
+        runtimeSessionId still travels in the offer body.
         """
         global _request_handler
         rtype = payload.get("type", "unknown")
         data = payload.get("data") or {}
 
         if rtype == "offer":
-            # Header is the source of truth; body gateway_token is a transitional fallback.
-            user_token = _bearer_from_headers(context) or data.get("gateway_token")
+            # The user JWT comes ONLY from the Authorization header (validated by the
+            # runtime's JWT authorizer, passed through via the header allowlist) — the
+            # same single identity channel the Strands analytics agent uses.
+            user_token = _bearer_from_headers(context)
             runtime_session_id = data.get("runtimeSessionId")
             if runtime_session_id:
                 logger.info(f"[voice] offer for session {runtime_session_id[:24]}...")
