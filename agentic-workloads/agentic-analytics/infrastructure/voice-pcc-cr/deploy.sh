@@ -36,6 +36,16 @@ cp "$ROOT/app/voice/bot.py" "$ROOT/app/voice/analytics_processor.py" "$ROOT/app/
    "$ROOT/app/voice/pyproject.toml" "$ROOT/app/voice/uv.lock" "$HERE/build/bot_context/"
 cp "$ROOT/app/voice/Dockerfile" "$HERE/build/bot_context/Dockerfile"   # PCC base-image Dockerfile
 
+# Hash the bot source so a CODE-ONLY change flips the CustomResource's SourceHash
+# property → CFN fires the Update handler → the bot image is rebuilt. (Without this,
+# CFN sees no property change for a code edit and the agent is never rebuilt.)
+if command -v sha256sum >/dev/null 2>&1; then
+  SOURCE_HASH="$(cat "$HERE/build/bot_context/"* | sha256sum | cut -c1-16)"
+else
+  SOURCE_HASH="$(cat "$HERE/build/bot_context/"* | shasum -a 256 | cut -c1-16)"
+fi
+echo "    bot source hash: $SOURCE_HASH"
+
 echo "==> Packaging + deploying ${STACK}"
 aws cloudformation package \
   --template-file "$HERE/voice-pcc-cr-stack.yaml" \
@@ -52,7 +62,8 @@ aws cloudformation deploy \
     SecretSet="${SECRET_SET:-voice-analytics-secrets}" \
     MinAgents="$MIN_AGENTS" \
     MaxAgents="$MAX_AGENTS" \
-    PccPrivateApiKey="$PCC_API_KEY"
+    PccPrivateApiKey="$PCC_API_KEY" \
+    SourceHash="$SOURCE_HASH"
 
 echo "==> Done. PCC agent managed by stack ${STACK} (MinAgents=${MIN_AGENTS})."
 echo "    Rescale: redeploy with MIN_AGENTS=1.  Tear down: aws cloudformation delete-stack --stack-name ${STACK}"

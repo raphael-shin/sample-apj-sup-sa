@@ -38,6 +38,14 @@ Parameters:
       Pipecat Cloud PRIVATE API key (sk_...), from Dashboard → Settings → API Keys
       → Private. The documented /v1/agents + /v1/builds API authenticates with
       this, NOT the pcc_pat_ PAT (the PAT 401s on /v1/agents). Stored in Secrets Manager.
+  SourceHash:
+    Type: String
+    Default: ''
+    Description: >
+      Hash of the bot source (bot.py/analytics_processor.py/auth.py/deps/Dockerfile),
+      computed by deploy.sh. Passed as a CustomResource property so a CODE-ONLY change
+      flips this value → CFN fires the CR Update handler → the bot image is rebuilt.
+      Without it, CFN sees no property change for a code edit and never rebuilds.
 
 Resources:
   PatSecret:
@@ -73,6 +81,10 @@ Resources:
       MinAgents: !Ref MinAgents
       MaxAgents: !Ref MaxAgents
       AgentProfile: !Ref AgentProfile
+      # Code-change trigger: when the bot source changes, deploy.sh passes a new
+      # SourceHash here, which makes CFN fire the Update handler (rebuild). Without
+      # this, a code-only edit changes no CR property and the agent is never rebuilt.
+      SourceHash: !Ref SourceHash
       KrispAudioFilter: tel
 
 Outputs:
