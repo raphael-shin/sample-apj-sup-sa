@@ -43,8 +43,7 @@ The agent needs a foundation model. Find `TODO 1.2` in `exercises/basic_agent.py
 ::::expand{header="💡 Need help with TODO 1.2? Click to see the solution"}
 :::code{language=python showCopyAction=true}
 bedrock_model = BedrockModel(
-    model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
-    temperature=0.3,
+    model_id="global.anthropic.claude-sonnet-4-6",
     streaming=True
 )
 :::
