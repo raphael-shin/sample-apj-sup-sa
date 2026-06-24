@@ -450,6 +450,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:CreateSignalingChannel
                   - kinesisvideo:GetSignalingChannelEndpoint
                   - kinesisvideo:GetIceServerConfig
                 Resource: !Sub arn:aws:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/${KvsChannelName}/*
@@ -499,7 +500,13 @@ Resources:
               region = os.environ["AWS_REGION_NAME"]
               channel = os.environ["KVS_CHANNEL_NAME"]
               kvs = boto3.client("kinesisvideo", region_name=region)
-              arn = kvs.describe_signaling_channel(ChannelName=channel)["ChannelInfo"]["ChannelARN"]
+              # Create the channel if the runtime hasn't yet (the browser may call
+              # /api/ice BEFORE the first offer reaches the runtime, which is what
+              # lazily creates it). Both sides use the same SINGLE_MASTER channel.
+              try:
+                  arn = kvs.describe_signaling_channel(ChannelName=channel)["ChannelInfo"]["ChannelARN"]
+              except kvs.exceptions.ResourceNotFoundException:
+                  arn = kvs.create_signaling_channel(ChannelName=channel, ChannelType="SINGLE_MASTER")["ChannelARN"]
               ep = kvs.get_signaling_channel_endpoint(
                   ChannelARN=arn,
                   SingleMasterChannelEndpointConfiguration={"Protocols": ["HTTPS"], "Role": "MASTER"})
