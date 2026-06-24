@@ -34,6 +34,16 @@ import { DailyTransport } from '@pipecat-ai/daily-transport';
 import { fetchAccessToken } from './authService';
 import { getRuntimeSessionId } from './awsAgentCore';
 
+// Coerce a transcript value (string, { text }, { text: { text } }, or other
+// nested shapes Pipecat client/transport versions emit) into a plain string, so
+// the chat never renders "[object Object]". Returns '' if nothing string-like.
+function _asText(v, depth = 0) {
+  if (v == null || depth > 4) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') return _asText(v.text, depth + 1);
+  return '';
+}
+
 // A single hidden <audio> element that plays the bot's audio track. Without
 // this, the bot generates speech and sends it over WebRTC but nothing in the
 // page renders it, so the user hears nothing (the bare Playground does this for
@@ -194,7 +204,10 @@ export async function startVoiceSession(opts) {
   // so interim/self-corrected partials don't each become a separate bubble.
   client.on(RTVIEvent.UserTranscript, (data) => {
     if (!data || data.final !== true) return;
-    const text = data.text;
+    // `text` is normally a string, but some client/transport versions wrap it
+    // (e.g. { text: { text: "…" } } or a TranscriptData object) — coerce to a
+    // plain string so the chat never renders "[object Object]".
+    const text = _asText(data.text) || _asText(data);
     if (text && onUserTranscript) onUserTranscript(text);
   });
 

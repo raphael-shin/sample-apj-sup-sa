@@ -37,6 +37,19 @@ import { fetchAccessToken, fetchIdToken } from '../services/authService';
 import { useAuth } from '../services/AuthContext';
 import { startVoiceSession, stopVoiceSession, voiceConfigured } from '../services/voiceClient';
 
+// Coerce any error-ish value (Error, RTVI error object, string, or nested
+// { message }/{ error }/{ text }) into a readable string — so the error banner
+// never shows "[object Object]" when a voice transport emits a non-Error payload.
+const _errText = (e) => {
+  if (e == null) return 'Voice error';
+  if (typeof e === 'string') return e;
+  const m = e.message || e.error || e.reason || e.text || e.data;
+  if (typeof m === 'string' && m) return m;
+  if (m && typeof m === 'object') return _errText(m);
+  try { const s = JSON.stringify(e); if (s && s !== '{}') return s; } catch (_) {}
+  return 'Voice error';
+};
+
 // Parse agent response for SQL approval requests
 const parseSqlApproval = (content) => {
   if (!content) return null;
@@ -250,6 +263,10 @@ const ChatPanel = ({ onPanelUpdate, staffInfo }) => {
     // user-voice bubble we should append to rather than create anew.
     const voiceUserOpenRef = { current: false };
     const appendUserVoice = (text) => {
+      // Defensive: store a string, never an object (which would render as
+      // "[object Object]"). voiceClient already coerces, but guard here too.
+      if (text && typeof text === 'object') text = text.text || JSON.stringify(text);
+      if (typeof text !== 'string') text = String(text ?? '');
       setMessages(prev => {
         if (voiceUserOpenRef.current && prev.length && prev[prev.length - 1].role === 'user') {
           const merged = [...prev];
@@ -290,7 +307,7 @@ const ChatPanel = ({ onPanelUpdate, staffInfo }) => {
           }
         },
         onReady: () => setVoiceState('on'),
-        onError: (e) => { stopThinking(); setConnectionError((e && (e.message || e.toString())) || 'Voice error'); stopVoice(); },
+        onError: (e) => { stopThinking(); setConnectionError(_errText(e)); stopVoice(); },
         onDisconnected: () => { stopThinking(); voiceClientRef.current = null; setVoiceState('off'); },
         // Share the SAME app session id as the text chat so voice + text turns
         // land in one AgentCore Memory thread (context carries across both).

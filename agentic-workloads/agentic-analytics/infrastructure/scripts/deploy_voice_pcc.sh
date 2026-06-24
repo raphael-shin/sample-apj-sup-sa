@@ -52,8 +52,12 @@ AMPLIFY_ORIGIN="https://main.${AMPLIFY_APP_ID}.amplifyapp.com"
 # The PCC bot calls the analytics AgentCore Runtime by ARN (Bearer JWT, not SigV4).
 # Pull the CURRENT analytics runtime ARN from the main stack's AgentCore nested stack
 # so the bot always targets the live runtime (not a stale value baked into the secret).
+# Match the AgentCoreStack nested stack by its EXACT logical id — a contains() match
+# also catches VoiceAgentCoreStack (it contains the substring "AgentCoreStack"), which
+# returns two ARNs and breaks the describe-stacks below (empty AGENT_ARN). The logical
+# id is fixed in main-stack.yaml, so an equality match is correct and unambiguous.
 AGENTCORE_STACK="$(aws cloudformation list-stack-resources --stack-name "$MAIN_STACK" --region "$REGION" \
-  --query "StackResourceSummaries[?ResourceType=='AWS::CloudFormation::Stack' && contains(LogicalResourceId,'AgentCoreStack')].PhysicalResourceId" --output text)"
+  --query "StackResourceSummaries[?ResourceType=='AWS::CloudFormation::Stack' && LogicalResourceId=='AgentCoreStack'].PhysicalResourceId" --output text)"
 AGENT_ARN="$(aws cloudformation describe-stacks --stack-name "$AGENTCORE_STACK" --region "$REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text 2>/dev/null)"
 # Fallback: derive from the runtime id output if the ARN output isn't present.
