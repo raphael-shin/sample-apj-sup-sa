@@ -57,3 +57,7 @@ Thumbs.db
 # Claude Code local state (skills/ ARE tracked — project skills + speckit)
 .claude/skills/health-review-workspace/
 .claude/settings.local.json
+
+# Security-scan working dir (cloned guard rulesets + scan output; reproduce locally, never commit)
+.scan-logs/
+.codex-review-logs/

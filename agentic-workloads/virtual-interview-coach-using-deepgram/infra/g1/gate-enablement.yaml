@@ -121,6 +121,13 @@ Resources:
 
   InterviewAgent:
     Type: AWS::Bedrock::Agent
+    # CKV_AWS_373 (Bedrock Agent CMK) suppressed: a customer-managed key is not warranted for a
+    # generic practice-interview agent that handles no PII and no personalization (Constitution III).
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_373
+            comment: Generic no-PII demo agent; CMK encryption not warranted for sample code.
     Properties:
       AgentName: !Sub ${AWS::StackName}-interview-coach
       Description: Generic G1 practice-interview coach (no personalization).
@@ -189,6 +196,11 @@ Resources:
       ManageMasterUserPassword: true
       AllocatedStorage: "20"
       StorageType: gp3
+      StorageEncrypted: true                 # RDS_STORAGE_ENCRYPTED / CKV_AWS_16 (default RDS key, no cost)
+      AutoMinorVersionUpgrade: true          # RDS_AUTOMATIC_MINOR_VERSION_UPGRADE_ENABLED
+      EnableIAMDatabaseAuthentication: true  # CKV_AWS_161 (coexists with the Secrets-Manager password)
+      # PubliclyAccessible + single-AZ are intentional for this POC (the laptop harness reaches the DB
+      # over its public endpoint; demo scale). Reported, not suppressed — see SECURITY-SCAN-NOTES.md.
       PubliclyAccessible: true
       MultiAZ: false
       BackupRetentionPeriod: 0
@@ -202,6 +214,18 @@ Resources:
   # --- Secrets (forward-looking; for the deployed worker) -------------------------------
   DeepgramSecret:
     Type: AWS::SecretsManager::Secret
+    # SECRETSMANAGER_USING_CMK / CKV_AWS_149 suppressed: Secrets Manager encrypts with the
+    # AWS-managed aws/secretsmanager key by default; a dedicated CMK is unnecessary for a sample.
+    # Rotation is intentionally not configured (the harness sets the key once) — reported in
+    # SECURITY-SCAN-NOTES.md, not suppressed.
+    Metadata:
+      guard:
+        SuppressedRules:
+          - SECRETSMANAGER_USING_CMK
+      checkov:
+        skip:
+          - id: CKV_AWS_149
+            comment: Default aws/secretsmanager key suffices for a sample; CMK adds cost.
     Properties:
       Name: !Sub ${AWS::StackName}/deepgram
       Description: Deepgram API key for the deployed voice worker (local harness uses .env).
@@ -214,6 +238,12 @@ Resources:
   WorkerLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
+    # CLOUDWATCH_LOG_GROUP_ENCRYPTED suppressed: CloudWatch Logs are encrypted at rest with an
+    # AWS-managed key by default; a customer-managed KMS key is unnecessary for sample logs.
+    Metadata:
+      guard:
+        SuppressedRules:
+          - CLOUDWATCH_LOG_GROUP_ENCRYPTED
     Properties:
       LogGroupName: !Sub /interviewcoach/g1/${AWS::StackName}/voice-worker
       RetentionInDays: 14

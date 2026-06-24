@@ -41,13 +41,28 @@ Resources:
     Type: AWS::S3::Bucket
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
+    # S3_DEFAULT_ENCRYPTION_KMS suppressed: SSE-S3 (AES256, below) is sufficient for a transient
+    # source zip in a disposable build stack. S3_BUCKET_LOGGING_ENABLED / S3_BUCKET_DEFAULT_LOCK_ENABLED
+    # are intentionally not met (dedicated log bucket / Object Lock both fight the 1-day expiry +
+    # stack teardown) — reported in SECURITY-SCAN-NOTES.md, not suppressed.
+    Metadata:
+      guard:
+        SuppressedRules:
+          - S3_DEFAULT_ENCRYPTION_KMS
     Properties:
       BucketName: !Sub ${AWS::StackName}-src-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256   # SSE-S3 at-rest encryption (free) — S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+      VersioningConfiguration:
+        Status: Enabled              # CKV_AWS_21 / S3_BUCKET_VERSIONING_ENABLED
       LifecycleConfiguration:
         Rules:
           - Id: expire-source-zips
             Status: Enabled
             ExpirationInDays: 1
+            NoncurrentVersionExpirationInDays: 1
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -112,6 +127,13 @@ Resources:
 
   BuildProject:
     Type: AWS::CodeBuild::Project
+    # CODEBUILD_ENCRYPTION_KEY_RULE suppressed: this transient project produces NO_ARTIFACTS (it
+    # pushes images straight to ECR) and the whole stack is deleted once the images land, so a
+    # customer-managed key for build artifacts has nothing durable to protect.
+    Metadata:
+      guard:
+        SuppressedRules:
+          - CODEBUILD_ENCRYPTION_KEY_RULE
     Properties:
       Name: !Ref AWS::StackName
       ServiceRole: !GetAtt CodeBuildRole.Arn

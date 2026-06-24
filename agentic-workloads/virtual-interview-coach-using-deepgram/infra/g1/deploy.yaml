@@ -159,6 +159,13 @@ Resources:
     Type: AWS::ECR::Repository
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
+    # CKV_AWS_136 (ECR CMK) suppressed: ECR encrypts images with an AWS-managed key (AES256) by
+    # default. A dedicated CMK adds cost + key-policy management not warranted for sample images.
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_136
+            comment: ECR default AES256 encryption is sufficient for sample images; CMK adds cost.
     Properties:
       RepositoryName: !Sub ${ProjectTag}/voice-worker
       EmptyOnDelete: true
@@ -172,6 +179,11 @@ Resources:
     Type: AWS::ECR::Repository
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_136
+            comment: ECR default AES256 encryption is sufficient for sample images; CMK adds cost.
     Properties:
       RepositoryName: !Sub ${ProjectTag}/backend
       EmptyOnDelete: true
@@ -185,6 +197,11 @@ Resources:
     Type: AWS::ECR::Repository
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_136
+            comment: ECR default AES256 encryption is sufficient for sample images; CMK adds cost.
     Properties:
       RepositoryName: !Sub ${ProjectTag}/report-worker
       EmptyOnDelete: true
@@ -197,10 +214,24 @@ Resources:
   # --- F003 async report job queue -------------------------------------------------------
   ReportQueue:
     Type: AWS::SQS::Queue
+    # SQS_QUEUE_KMS_MASTER_KEY_ID_RULE suppressed: this queue uses SSE-SQS (AWS-managed key,
+    # enabled below) which encrypts messages at rest at no cost. A customer-managed KMS key is
+    # unnecessary for sample-code job metadata (reviewer-cited as an unnecessary finding).
+    Metadata:
+      guard:
+        SuppressedRules:
+          - SQS_QUEUE_KMS_MASTER_KEY_ID_RULE
+      checkov:
+        skip:
+          # CKV_AWS_27 only recognizes a KMS key, not SSE-SQS. The queue IS encrypted at rest via
+          # SqsManagedSseEnabled (AWS-managed key, free); a CMK is unnecessary for sample job metadata.
+          - id: CKV_AWS_27
+            comment: SSE-SQS (SqsManagedSseEnabled) encrypts at rest; CMK not needed for a sample.
     Properties:
       QueueName: !Sub ${AWS::StackName}-report-jobs
       VisibilityTimeout: 360        # > the worker's per-job scoring time; redrive if it crashes
       MessageRetentionPeriod: 86400 # 1 day
+      SqsManagedSseEnabled: true    # SSE-SQS at-rest encryption (AWS-managed key, free) — CKV_AWS_27
       Tags:
         - Key: project
           Value: !Ref ProjectTag
@@ -515,6 +546,18 @@ Resources:
   # --- Shared voice_token secret (backend mints, worker verifies; same value) ------------
   VoiceTokenSecret:
     Type: AWS::SecretsManager::Secret
+    # SECRETSMANAGER_USING_CMK / CKV_AWS_149 suppressed: Secrets Manager encrypts with the
+    # AWS-managed aws/secretsmanager key by default. A dedicated CMK is unnecessary for a
+    # sample's shared HS256 signing secret. Rotation (SECRETSMANAGER_ROTATION_ENABLED_CHECK)
+    # is intentionally not configured — see SECURITY-SCAN-NOTES.md (reported, not suppressed).
+    Metadata:
+      guard:
+        SuppressedRules:
+          - SECRETSMANAGER_USING_CMK
+      checkov:
+        skip:
+          - id: CKV_AWS_149
+            comment: Default aws/secretsmanager key suffices for a sample; CMK adds cost.
     Properties:
       Name: !Sub ${AWS::StackName}/voice-token
       Description: HS256 secret shared by backend (mint) and worker (verify) for voice_token.
@@ -527,9 +570,16 @@ Resources:
           Value: !Ref ProjectTag
 
   # --- Logs ------------------------------------------------------------------------------
+  # CLOUDWATCH_LOG_GROUP_ENCRYPTED suppressed on all three log groups: CloudWatch Logs are
+  # encrypted at rest with an AWS-managed key by default. A customer-managed KMS key (with the
+  # logs.amazonaws.com key-policy grant it requires) is unnecessary for sample operational logs.
   WorkerLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
+    Metadata:
+      guard:
+        SuppressedRules:
+          - CLOUDWATCH_LOG_GROUP_ENCRYPTED
     Properties:
       LogGroupName: !Sub /interviewcoach/g1/${AWS::StackName}/voice-worker
       RetentionInDays: 14
@@ -537,6 +587,10 @@ Resources:
   BackendLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
+    Metadata:
+      guard:
+        SuppressedRules:
+          - CLOUDWATCH_LOG_GROUP_ENCRYPTED
     Properties:
       LogGroupName: !Sub /interviewcoach/g1/${AWS::StackName}/backend
       RetentionInDays: 14
@@ -544,6 +598,10 @@ Resources:
   ReportWorkerLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
+    Metadata:
+      guard:
+        SuppressedRules:
+          - CLOUDWATCH_LOG_GROUP_ENCRYPTED
     Properties:
       LogGroupName: !Sub /interviewcoach/g1/${AWS::StackName}/report-worker
       RetentionInDays: 14
@@ -1016,8 +1074,29 @@ Resources:
     Type: AWS::S3::Bucket
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
+    # S3_DEFAULT_ENCRYPTION_KMS suppressed: SSE-S3 (AES256) is applied below and is sufficient for
+    # public, non-PII static SPA assets; a CMK is not warranted. S3_BUCKET_LOGGING_ENABLED and
+    # S3_BUCKET_DEFAULT_LOCK_ENABLED are intentionally NOT met (access logging needs a dedicated
+    # log bucket; Object Lock would block the demo's DeletionPolicy: Delete teardown) and are
+    # reported in SECURITY-SCAN-NOTES.md rather than suppressed.
+    Metadata:
+      guard:
+        SuppressedRules:
+          - S3_DEFAULT_ENCRYPTION_KMS
     Properties:
       BucketName: !Sub ${AWS::StackName}-spa-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256   # SSE-S3 at-rest encryption (free) — S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+      VersioningConfiguration:
+        Status: Enabled              # CKV_AWS_21 / S3_BUCKET_VERSIONING_ENABLED
+      LifecycleConfiguration:
+        Rules:
+          # Versioning is on for compliance; expire noncurrent SPA builds quickly to bound cost.
+          - Id: expire-noncurrent-spa
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 7
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -1102,6 +1181,17 @@ Resources:
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+          # Enforce TLS-only access — S3_BUCKET_SSL_REQUESTS_ONLY / CKV_AWS_53.
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt SpaBucket.Arn
+              - !Sub ${SpaBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
 
   # --- F002 (G2): raw-resume storage (Constitution III) ----------------------------------
   # Dedicated CMK so resume PII is encrypted under a key distinct from anything else, and the
