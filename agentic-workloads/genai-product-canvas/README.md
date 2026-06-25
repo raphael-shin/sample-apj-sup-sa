@@ -359,6 +359,19 @@ direct price — but the margin question must be answered.
 |------|---------|
 | [`genai-product-canvas-template.pptx`](./genai-product-canvas-template.pptx) | The blank canvas. Fill in live, or print large and use sticky notes. One per feature. |
 | `README.md` | This facilitator guide. |
+| [`facilitator-kit/`](./facilitator-kit/) | Everything a new SA needs to run and to *teach* this workshop (see below). |
+
+## Facilitator kit — running and scaling it
+
+New to facilitating, or rolling this out to other SAs? Start in
+[`facilitator-kit/`](./facilitator-kit/):
+
+| File | Purpose |
+|------|---------|
+| [`run-sheet.md`](./facilitator-kit/run-sheet.md) | Minute-by-minute script for the SA + AM pair, with the who-drives-what split and pacing rules. |
+| [`sample-completed-canvas.md`](./facilitator-kit/sample-completed-canvas.md) | A fully worked canvas (a "HelpHive" support agent-assist feature) — your reference answer for every box. |
+| [`faq-and-objections.md`](./facilitator-kit/faq-and-objections.md) | Prep FAQ for facilitators + scripted responses to in-the-room objections (starting with "why not just a chatbot"). |
+| [`train-the-trainer.md`](./facilitator-kit/train-the-trainer.md) | The observe → co-facilitate → lead onboarding path, community/ownership model, and how to measure scale across APJ. |
 
 ---
 
