@@ -47,7 +47,6 @@ DEFAULTS: dict[str, str] = {
     "llama_4_scout_17b":     "exp_6",  # p4d.24xlarge
     # additional models added later:
     "gpt_oss_20b":           "exp_1",  # g7e.2xlarge Blackwell native MXFP4
-    "qwen3_vl_30b_a3b":      "exp_1",  # g6e.2xlarge 1xL40S FP8
     "qwen3_coder_next":      "exp_1",  # g6e.12xlarge 4xL40S FP8 TP=4
 }
 

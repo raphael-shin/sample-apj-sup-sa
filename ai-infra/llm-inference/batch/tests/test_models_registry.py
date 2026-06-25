@@ -26,7 +26,6 @@ _MODELS: list[tuple[str, str]] = [
     # Additional models added later:
     ("models.gpt_oss_20b",           "g7e_spot_single_queue"),
     ("models.qwen3_coder_next",      "g6e_spot_single_queue"),
-    ("models.qwen3_vl_30b_a3b",      "g6e_12xlarge_spot_single_queue"),
 ]
 
 
@@ -99,36 +98,6 @@ def test_llama_4_scout_plans_lift_vllm_startup_timeout(factory: str) -> None:
         f"llama_4_scout_17b.{factory}: "
         f"vllm_startup_timeout_seconds={plan.vllm_startup_timeout_seconds}, "
         "expected >=4500 (218 GiB / 50 MiB/s = 4464s minimum + warmup)"
-    )
-
-
-@pytest.mark.parametrize("factory", [
-    "g6e_12xlarge_spot_single_queue",
-    "g6e_2xlarge_spot_single_queue",
-])
-def test_qwen3_vl_plans_lift_vllm_startup_timeout(factory: str) -> None:
-    """Audit fix #20: Qwen3-VL-30B-A3B takes longer than 900s (15 min) to
-    finish vLLM ``Starting to load model`` on g6e spot — observed two
-    consecutive attempt failures at exactly the 900s mark while the engine
-    was still streaming weights from HF and applying on-the-fly fp8 quant.
-
-    The model has a vision encoder (ViT) + 30B MoE LLM body + chunked-prefill
-    compile + cuda-graph capture under FullAndPiecewise mode; the cold-start
-    path is intrinsically heavier than a same-size dense model. Both VL plans
-    must opt up ``vllm_startup_timeout_seconds`` to >=1800 (30 min) so a
-    single retry doesn't burn another GPU-hour on the same boundary.
-
-    Same shape as the Llama-4-Scout startup-grace requirement above —
-    startup grace must cover the slow path of the specific model
-    architecture.
-    """
-    pkg = importlib.import_module("models.qwen3_vl_30b_a3b")
-    plan = getattr(pkg, factory)()
-    assert plan.vllm_startup_timeout_seconds >= 1800, (
-        f"qwen3_vl_30b_a3b.{factory}: "
-        f"vllm_startup_timeout_seconds={plan.vllm_startup_timeout_seconds}, "
-        "expected >=1800 (Qwen3-VL cold start exceeds 900s on g6e; "
-        "ViT init + fp8 quant + cudagraph capture)"
     )
 
 

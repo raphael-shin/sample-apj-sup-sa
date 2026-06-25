@@ -34,8 +34,6 @@ _MODELS: list[tuple[str, str, str, int]] = [
      "openai/gpt-oss-20b", 6),
     ("qwen3_coder_next",      "qwen3-coder-next-vllm-ec2-benchmark.ipynb",
      "Qwen/Qwen3-Coder-Next", 4),
-    ("qwen3_vl_30b_a3b",      "qwen3-vl-30b-a3b-vllm-ec2-benchmark.ipynb",
-     "Qwen/Qwen3-VL-30B-A3B-Instruct", 5),
 ]
 
 

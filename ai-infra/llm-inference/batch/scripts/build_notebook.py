@@ -167,22 +167,6 @@ MODEL_CONFIGS: dict[str, BatchModelConfig] = {
         concurrency_default=64,
         primary_instance="g6e.12xlarge",
     ),
-    "qwen3_vl_30b_a3b": BatchModelConfig(
-        package="qwen3_vl_30b_a3b",
-        var_name="QWEN3_VL_30B_A3B",
-        nb_filename="qwen3_vl_30b_a3b_batch.ipynb",
-        display_name="Qwen3-VL 30B-A3B Instruct",
-        hf_repo="Qwen/Qwen3-VL-30B-A3B-Instruct",
-        domain="vision",
-        sample_data_file="01-charts.jsonl",
-        weight_gib=62.0,
-        weight_note="VLM 30B/3B-A MoE + ViT. ~62 GiB BF16. Always TP-only — pipeline parallel breaks VLMs in vLLM. Caps image-token KV explosion via --limit-mm-per-prompt + --max-num-seqs.",
-        gated=False,
-        plans=["g6e_12xlarge_spot_single_queue", "g6e_2xlarge_spot_single_queue"],
-        default_plan="g6e_12xlarge_spot_single_queue",
-        concurrency_default=32,
-        primary_instance="g6e.12xlarge",
-    ),
 }
 
 
@@ -605,11 +589,24 @@ def cells() -> list[dict]:
             """\
             # Domain-specific system prompt shared across all records — one fixed
             # system prompt is exactly what prefix caching was designed for.
-            # We import it from the benchmark's per-model package so smoke,
-            # batch and benchmark stay in sync.
-            import sys as _sys
-            _sys.path.insert(0, str(PROJECT_ROOT.parent / "benchmark"))
-            from models.""" + c.package + """ import SYSTEM_PROMPT  # noqa: E402
+            # We reuse the per-model SYSTEM_PROMPT from the benchmark tree so
+            # smoke, batch and benchmark stay in sync.
+            #
+            # Section 0 already imported the *batch* `models` package, so
+            # `models.<name>` is cached in sys.modules. The benchmark tree has a
+            # separate `models` package of the same name, so a plain
+            # `from models.<name> import SYSTEM_PROMPT` would resolve to the
+            # cached batch package (which has no SYSTEM_PROMPT) and raise
+            # ImportError. Load the benchmark prompts.py directly by file path
+            # under a unique module name to dodge the sys.modules collision —
+            # and to skip the benchmark package's __init__, which imports
+            # vllm_ec2_bench (not on this notebook's path).
+            import importlib.util as _ilu  # noqa: E402
+            _prompts_path = PROJECT_ROOT.parent / "benchmark" / "models" / """ + repr(c.package) + """ / "prompts.py"
+            _spec = _ilu.spec_from_file_location(""" + repr(f"_bench_{c.package}_prompts") + """, _prompts_path)
+            _bench_prompts = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_bench_prompts)
+            SYSTEM_PROMPT = _bench_prompts.SYSTEM_PROMPT
 
             # Source: one of the synthesized seed files for this model's domain.
             src_file = PROJECT_ROOT.parent / "sample-data" / """ + repr(c.domain) + """ / """ + repr(c.sample_data_file) + """
@@ -750,11 +747,21 @@ def cells() -> list[dict]:
         )),
         code(dedent(
             """\
+            def _first_message_text(resp):
+                # Defensive: any level (response, choices, the first choice,
+                # message) may be missing or None on errored records. Some
+                # models (e.g. gpt-oss) put text in reasoning_content rather
+                # than content, so fall back to that before giving up.
+                choices = (resp or {}).get("choices") or []
+                msg = (choices[0] or {}).get("message") if choices else None
+                msg = msg or {}
+                return msg.get("content") or msg.get("reasoning_content") or ""
+
             samples = sample_outputs(report, n=3, region=REGION)
             for s in samples:
                 print("---", s.get("id", "?"))
                 print("error:  ", s.get("error"))
-                print("output: ", (s.get("response") or {}).get("choices", [{}])[0].get("message", {}).get("content", "")[:200])
+                print("output: ", _first_message_text(s.get("response"))[:200])
             """
         )),
 

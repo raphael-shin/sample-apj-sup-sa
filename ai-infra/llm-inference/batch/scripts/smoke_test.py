@@ -53,7 +53,6 @@ MODEL_REGISTRY: dict[str, tuple[str, str, str]] = {
     "llama_4_scout_17b":     ("models.llama_4_scout_17b",     "p4d_spot_single_queue", "travel"),
     "gpt_oss_20b":           ("models.gpt_oss_20b",           "g7e_spot_single_queue", "travel"),
     "qwen3_coder_next":      ("models.qwen3_coder_next",      "p4d_spot_single_queue", "travel"),
-    "qwen3_vl_30b_a3b":      ("models.qwen3_vl_30b_a3b",      "g6e_2xlarge_spot_single_queue", "vision"),
 }
 
 

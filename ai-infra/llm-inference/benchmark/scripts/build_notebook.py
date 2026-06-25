@@ -12,7 +12,7 @@ Notebook content lives in code so changes show up in git diffs and the
 
 The notebook structure is identical across models; the per-model bits are
 the title prose, weight footprint, instance experiments and which sample-data
-file feeds the load test (travel for text models, vision for Qwen3-VL).
+file feeds the load test.
 """
 from __future__ import annotations
 
@@ -79,16 +79,6 @@ _EXPERIMENTS_QWEN3_CODER_NEXT: list[tuple[str, str, str]] = [
     ("exp_3", "Experiment 3 — p4de.24xlarge (2× A100 80GB) — TP=2", "standard"),
     ("exp_4", "Experiment 4 — p4de.24xlarge (4× A100 80GB) — TP=4", "standard"),
 ]
-
-# Qwen3-VL-30B-A3B: vision-language MoE.
-_EXPERIMENTS_QWEN3_VL: list[tuple[str, str, str]] = [
-    ("exp_1", "Experiment 1 — g6e.2xlarge (1× L40S) — FP8 quant, image=4", "standard"),
-    ("exp_2", "Experiment 2 — g6e.12xlarge (4× L40S) — BF16 TP=4, image=8", "standard"),
-    ("exp_3", "Experiment 3 — g7e.2xlarge (1× Blackwell) — BF16, image=4", "standard"),
-    ("exp_4", "Experiment 4 — g7e.12xlarge (4× Blackwell) — BF16 TP=4, image=8", "standard"),
-    ("exp_5", "Experiment 5 — p4d.24xlarge (8× A100 40GB) — BF16 TP=8, image=8", "standard"),
-]
-
 
 MODEL_CONFIGS: dict[str, ModelNotebookConfig] = {
     "medgemma_27b": ModelNotebookConfig(
@@ -202,20 +192,6 @@ MODEL_CONFIGS: dict[str, ModelNotebookConfig] = {
         gated=False,
         architecture_note="80B/3B-A MoE Apache-2.0 coding model (qwen3_next hybrid arch, 512 experts top-10 + 1 shared, 262K native context). Travel-as-coding task: SYSTEM_PROMPT asks for Python code that parses the booking JSON. Does NOT emit `<think>`; recommended sampling temp=1.0, top_p=0.95, top_k=40.",
         experiments=list(_EXPERIMENTS_QWEN3_CODER_NEXT),
-    ),
-    "qwen3_vl_30b_a3b": ModelNotebookConfig(
-        package="qwen3_vl_30b_a3b",
-        var_name="QWEN3_VL_30B_A3B",
-        nb_filename="qwen3-vl-30b-a3b-vllm-ec2-benchmark.ipynb",
-        display_name="Qwen3-VL 30B-A3B Instruct",
-        hf_repo="Qwen/Qwen3-VL-30B-A3B-Instruct",
-        domain="vision",
-        sample_data_file="01-charts.jsonl",
-        weight_gib=62.0,
-        weight_note="Qwen3-VL-30B-A3B is 30B/3B-A MoE + ViT (DeepStack, Interleaved-MRoPE) with image+text → text. ~62 GiB BF16. Vision sample data is in `sample-data/vision/` (10-30 public image URLs). Always TP-only — pipeline parallel breaks VLMs in vLLM.",
-        gated=False,
-        architecture_note="VLM MoE Apache-2.0. May need `transformers >= 4.57` for Qwen3VLMoeForConditionalGeneration. Image-token KV explosion is capped via `--limit-mm-per-prompt image=N` and `--max-num-seqs N`.",
-        experiments=list(_EXPERIMENTS_QWEN3_VL),
     ),
 }
 
