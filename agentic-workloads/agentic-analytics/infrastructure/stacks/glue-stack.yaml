@@ -66,14 +66,30 @@ Resources:
   # MutationType: APPEND so we never clobber any pre-existing data-lake admins.
   LakeFormationSettings:
     Type: AWS::LakeFormation::DataLakeSettings
+    Metadata:
+      # cfn-lint's bundled schema wrongly types Principal as a string and flags the
+      # object form (E3012). The live PutDataLakeSettings API requires the object
+      # form (verified by deploy + direct API call), so suppress the false positive.
+      cfn-lint:
+        config:
+          ignore_checks:
+            - E3012
     Properties:
       MutationType: APPEND
+      # NOTE: Principal must be the OBJECT form { DataLakePrincipalIdentifier: ... }.
+      # The CloudFormation docs show a bare string and cfn-lint (E3012) wrongly
+      # flags the object form, but the live resource provider REJECTS the string
+      # ("Value of property .../Principal does not match type {Object}"). The object
+      # form matches `aws lakeformation get-data-lake-settings` output. Verified on
+      # a real deploy — do not "simplify" to a string.
       CreateDatabaseDefaultPermissions:
-        - Principal: IAM_ALLOWED_PRINCIPALS
+        - Principal:
+            DataLakePrincipalIdentifier: IAM_ALLOWED_PRINCIPALS
           Permissions:
             - ALL
       CreateTableDefaultPermissions:
-        - Principal: IAM_ALLOWED_PRINCIPALS
+        - Principal:
+            DataLakePrincipalIdentifier: IAM_ALLOWED_PRINCIPALS
           Permissions:
             - ALL
 
