@@ -21,7 +21,6 @@ _MODELS: list[str] = [
     # Additional models added later:
     "models.gpt_oss_20b",
     "models.qwen3_coder_next",
-    "models.qwen3_vl_30b_a3b",
 ]
 
 

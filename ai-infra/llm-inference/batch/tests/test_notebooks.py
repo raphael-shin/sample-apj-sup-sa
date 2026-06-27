@@ -102,10 +102,6 @@ def test_notebook_uses_correct_sample_data_domain(
     model: str, primary_instance: str, hf_repo: str,
 ) -> None:
     text = _load_notebook_text(model)
-    # Text models use the travel-booking dataset; the vision model uses
-    # the vision dataset.
-    if model == "qwen3_vl_30b_a3b":
-        assert "sample-data/vision/" in text or "sample-data\" / \"vision" in text
-    else:
-        assert "sample-data/travel/" in text or "sample-data\" / \"travel" in text or \
-               "synthesized travel-booking" in text
+    # All current batch models use the travel-booking dataset.
+    assert "sample-data/travel/" in text or "sample-data\" / \"travel" in text or \
+           "synthesized travel-booking" in text
