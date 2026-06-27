@@ -78,6 +78,27 @@ window.__APP_CONFIG__ = { VOICE_SIGNALING_URL: "https://xxxxxxxxxx.execute-api.u
 
 `config.js` is served statically, so just **reload** the chat UI tab — no rebuild. A microphone / voice button now appears.
 
+::::expand{header="Using the Amplify-hosted UI instead? (if you did the optional Step 3.6)"}
+If you deployed the UI to **AWS Amplify** in [Step 3.6](../01-agent-and-infrastructure/03-connect-ui/) and have been using the `https://main.xxxxxxxxxxxxxx.amplifyapp.com` URL, editing the local `config.js` won't affect it — the Amplify build has its own bundled config. The voice client reads the same value from a **build-time** variable (`REACT_APP_VOICE_SIGNALING_URL`), so you just rebuild + redeploy the Amplify UI with that variable set.
+
+From the agent folder, write a small env file with the signaling URL and re-run the same Amplify deploy script you used in Step 3.6:
+
+:::code{language=bash showCopyAction=true}
+cd /workshop/agentic-analytics/app/agentcore_strands
+
+# the VoiceSignalingUrl from the command above
+VOICE_URL=$(aws cloudformation describe-stacks --stack-name agentic-analytics-voice --region us-east-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='VoiceSignalingUrl'].OutputValue" --output text)
+
+printf 'REACT_APP_VOICE_SIGNALING_URL=%s\n' "$VOICE_URL" > /tmp/voice.env
+python3 ui/deploy_amplify_hosting.py --env-file /tmp/voice.env
+:::
+
+The script rebuilds the React app with `REACT_APP_VOICE_SIGNALING_URL` baked in and redeploys to the **same** Amplify app, so your existing Amplify URL now shows the voice button. Open that URL (not localhost) and reload. Everything else in this step works identically — voice is UI-host-agnostic.
+
+::alert[**CORS note:** the signaling proxy ships with `AllowedOrigin: '*'`, so it accepts requests from the Amplify origin out of the box. If you (or a later hardening step) restrict `AllowedOrigin`, set it to your Amplify URL and `make voice-deploy` again.]{type="info"}
+::::
+
 ### Step V.4: Talk to your data
 
 1. Make sure you're logged in (voice uses your JWT, same as text).
@@ -99,7 +120,7 @@ make voice-deploy DEEPGRAM_API_KEY=<your-key> DEEPGRAM_VOICE_ID=aura-2-thalia-en
 ## Verification
 
 - `make voice-deploy` finishes; `agentic-analytics-voice` reaches `CREATE_COMPLETE`
-- `VoiceSignalingUrl` is set in `app/ui/public/config.js` and the voice button appears after a reload
+- The signaling URL is wired into the UI (local: `app/ui/public/config.js`; Amplify: `REACT_APP_VOICE_SIGNALING_URL` rebuilt via `deploy_amplify_hosting.py`) and the voice button appears after a reload
 - A spoken question returns spoken audio plus the on-screen answer
 - A typed follow-up remembers the spoken turn (shared memory)
 
