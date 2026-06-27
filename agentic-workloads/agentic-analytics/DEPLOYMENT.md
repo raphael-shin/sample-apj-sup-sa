@@ -45,7 +45,7 @@ so RBAC/RLS is per-user (identical to the text path). No Daily key for agentcore
 | Mode | Where the Pipecat pipeline runs | How it's deployed |
 |------|----------------------------------|-------------------|
 | **laptop** | your laptop + UI on `localhost:3001` | `infrastructure/scripts/deploy_voice.sh laptop` (local dev; not a CFN value) |
-| **agentcore** | its OWN AgentCore Runtime (WebRTC + KVS TURN) in your AWS account | **Fully CFN**: `EnableVoice=true VoiceMode=agentcore` → main stack deploys `voice-agentcore-stack.yaml` (CodeBuild builds the ARM64 image; the Pipecat pipeline runs as a second AgentCore Runtime in VPC mode reusing the Aurora private subnets + NAT; a tiny API-Gateway+Cognito-JWT+Lambda signaling proxy translates the browser's SDP offer/ICE to the runtime and unwraps its SSE answer). One deploy. Fast iteration: `deploy_backend.sh --voice-only`. |
+| **agentcore** | its OWN AgentCore Runtime (WebRTC + KVS TURN) in your AWS account | **Fully CFN**: `EnableVoice=true VoiceMode=agentcore` → main stack deploys `voice-agentcore-stack.yaml` (CodeBuild builds the ARM64 image; the Pipecat pipeline runs as a second AgentCore Runtime in VPC mode in its own AgentCore-supported-AZ subnets attached to the Aurora NAT route table — see the AZ note below; a tiny API-Gateway+Cognito-JWT+Lambda signaling proxy translates the browser's SDP offer/ICE to the runtime and unwraps its SSE answer). One deploy. Fast iteration: `deploy_backend.sh --voice-only`. |
 | **pipecat-cloud** | Daily's Pipecat Cloud (SaaS) | **CFN + post-deploy script**: deploy the main stack with `EnableVoice=true VoiceMode=pipecat-cloud` (this leaves the UI's voice URL empty — main CFN does NOT deploy PCC infra), then run `infrastructure/scripts/deploy_voice_pcc.sh`. |
 
 ### Why agentcore is one-step but pipecat-cloud needs a script
@@ -82,9 +82,16 @@ is set only when voice is deployed (CFN injects it into `config.js`, or
   builds and block dependent resources until images are in ECR. ECR repos use
   `EmptyOnDelete: true` so the image repos delete cleanly.
 - **agentcore voice runs as a second AgentCore Runtime in VPC mode**
-  (`voice-agentcore-stack.yaml`), reusing the **Aurora VPC's private subnets + NAT**
-  (VPC NetworkMode is required for UDP TURN; the runtime ENIs reach
-  Deepgram/Bedrock/KVS/STS via the existing NAT — no new VPC or second NAT). WebRTC
+  (`voice-agentcore-stack.yaml`). VPC NetworkMode is required for UDP TURN. The stack
+  creates **its own two subnets pinned by `AvailabilityZoneId` to AgentCore-supported
+  AZs** and attaches them to the **Aurora VPC's private route table** (so the runtime
+  ENIs reach Deepgram/Bedrock/KVS/STS via the existing NAT — no new VPC or second NAT).
+  It does **not** reuse the Aurora private subnets directly: AgentCore Runtime only
+  operates in a subset of AZs (us-east-1: `use1-az1`/`use1-az2`/`use1-az4`, fixed by
+  AZ-ID), and `PrivateSubnet1` lands in `us-east-1a` = `use1-az6` in many accounts,
+  which would fail Runtime creation with *"subnets are in unsupported availability
+  zones."* The supported AZ-IDs are overridable params (`VoiceSubnet1AzId`/
+  `VoiceSubnet2AzId`); change them for other regions. WebRTC
   media relays through **Amazon Kinesis Video Streams (KVS) managed TURN** (a signaling
   channel, ~$0.03/mo). The runtime fetches TURN creds for itself, and the browser
   fetches the **same** creds from the signaling proxy's `GET /api/ice` (JWT-gated) so
