@@ -18,6 +18,8 @@ Each business manages their own fleet of unicorns, customers, bookings, and tran
 
 ## What You'll Build
 
+::alert[**Source code:** This workshop is built from a public reference implementation. Browse the full agent, infrastructure, and UI code at :link[aws-samples/sample-apj-sup-sa]{href="https://github.com/aws-samples/sample-apj-sup-sa/tree/main/agentic-workloads/agentic-analytics" external=true} — useful for reference during the labs and for adapting the patterns to your own use case afterward.]{type="info"}
+
 An AI-powered analytics assistant that understands natural language and translates it into the right database query. Here's what a typical interaction looks like:
 
 > **Analyst:** "Who are my top 5 customers by revenue?"

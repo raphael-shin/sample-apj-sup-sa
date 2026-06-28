@@ -282,6 +282,8 @@ The Cedar policy doesn't just *refuse* the booking tool — it makes it **invisi
 └─────────────────────────────────────────────────────────┘
 ```
 
+::alert[**This is one of the most important steps in the workshop** — multi-tenant isolation and access control are core to a well-architected SaaS agent. To study the full implementation, browse the complete project at :link[aws-samples/sample-apj-sup-sa]{href="https://github.com/aws-samples/sample-apj-sup-sa/tree/main/agentic-workloads/agentic-analytics" external=true}. The repository contains the complete **sample code** (agent, Lambda toolsets, Cedar policies, RLS schema), **this very workshop's content**, and a **demo mode** that deploys the whole system end to end in an AWS account — a useful reference for adapting these security patterns to your needs.]{type="info"}
+
 ## Verification
 
 - After uncommenting both Step-7a fences and `make deploy`, the stack has a Policy Engine with 3 Cedar policies

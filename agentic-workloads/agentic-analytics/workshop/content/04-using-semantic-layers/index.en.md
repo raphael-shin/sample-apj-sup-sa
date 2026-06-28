@@ -210,7 +210,7 @@ Key design decisions:
 
 3. **Same JWT extraction pattern** — Uses `context.client_context.custom['bedrockAgentCorePropagatedHeaders']` to read the JWT, identical to the Prebaked SQL and Custom SQL Lambdas.
 
-::alert[**Compare with Prebaked SQL:** In Step 3, the Lambda maps each tool to a database View — the LLM picks a tool. Here, the Lambda proxies Cube's API — the LLM constructs a JSON query from discovered dimensions and measures. The security model is the same (JWT → account_id filter), but the flexibility is much higher.]{type="info"}
+::alert[**Compare with Prebaked SQL:** In Step 3, the Lambda maps each tool to a database View — the LLM picks a tool. Here, the Lambda proxies Cube's API — the LLM constructs a JSON query from discovered dimensions and measures. The tenant-isolation *boundary*, however, differs: Prebaked/Custom SQL rely on PostgreSQL Row-Level Security, while the semantic layer enforces isolation in **this Lambda** by injecting the `account_id` filter (Cube connects to Aurora as the table owner and bypasses RLS). Step 9 covers this in detail. The flexibility is much higher than Prebaked SQL.]{type="info"}
 
 ### Step 6: Deploy the Semantic Layer Toolset
 
@@ -253,7 +253,14 @@ Now you'll deploy a completely separate stack — Gateway, Runtime, and Amplify 
 
 The parallel stack shares the same Aurora PostgreSQL database and Cognito User Pool as the existing stack. Only the Gateway, Runtime, and UI are separate — so both agents query the same data with the same user credentials, but use different tools.
 
-::alert[**Before running this script**, ensure that `uv` is installed on your Code Editor instance. If it's not installed, follow the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/). Also note that this script may need to be run twice — if the first run times out or partially completes (e.g., waiting for the Runtime to become active), re-running it is safe since all operations are idempotent.]{type="warning"}
+::alert[**Before running this script, install `uv`** (the script's runtime build step uses it; it isn't pre-installed). Run the one-liner below, then continue. See the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/) for details.]{type="warning"}
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env 2>/dev/null || export PATH="$HOME/.local/bin:$PATH"
+```
+
+::alert[**This script may need to be run twice — that's expected.** It creates a fresh IAM role for the Gateway, and AWS IAM can take a moment to propagate; the first run can fail at "Register SemanticLayer Target" with *"Gateway service is not authorized to perform AssumeRole on Gateway role"*. Simply **run the script again** — every step is idempotent, and the second run succeeds once the role has propagated.]{type="info"}
 
 ```bash
 cd /workshop/agentic-analytics/app/agentcore_strands
@@ -404,7 +411,9 @@ Follow these steps to verify tenant isolation:
 
 The two users belong to different accounts, so the `_inject_account_id_filter` function adds a different `account_id` value to the Cube query's `filters` array for each user. This means the same Cube JSON query produces different results depending on who is logged in — without the agent or the Cube model needing to know anything about multi-tenancy.
 
-This confirms that tenant isolation works at the Cube query level, consistent with how the Prebaked SQL and Custom SQL toolsets handle multi-tenancy.
+This confirms that tenant isolation works at the Cube query level — the same security *goal* as the Prebaked SQL and Custom SQL toolsets, but enforced by a **different mechanism**.
+
+::alert[**Important — tenant isolation here is enforced differently than in Step 7.** The Prebaked SQL and Custom SQL toolsets connect to Aurora as a **non-owner role** (`app_user`) and rely on **PostgreSQL Row-Level Security** to filter rows at the database engine. The semantic layer does **not** use RLS: Cube Core connects to Aurora as the table **owner** (the `postgres` user you entered in Step 1c), and table owners **bypass RLS**. Instead, tenant isolation is enforced **one layer up, in the Lambda** — `_inject_account_id_filter` adds an `account_id` filter (read from the JWT) to every Cube query, for every referenced cube, before it reaches Cube. So the isolation boundary for the semantic layer is the **Lambda + the propagated JWT**, not the database. This is why the Gateway must propagate the `Authorization` header to the Lambda (via the Gateway interceptor `deploy_semantic_layer_stack.py` configures) — without the JWT, the Lambda can't determine the tenant and the filter can't be applied. When you adapt this pattern, treat the Lambda's filter injection as the security-critical control and review it accordingly.]{type="warning"}
 
 ## Comparing the Three Data Access Patterns
 

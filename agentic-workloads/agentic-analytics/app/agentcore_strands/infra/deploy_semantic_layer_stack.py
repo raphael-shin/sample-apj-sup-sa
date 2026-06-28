@@ -34,6 +34,11 @@ PROJECT_ROOT = ROOT_DIR.parent.parent
 load_dotenv(ROOT_DIR / 'config.env')
 
 REGION = os.getenv('AWS_REGION', 'us-east-1')
+ENV_NAME = os.getenv('ENV_NAME', 'agentic-analytics')
+# The base/top-up stack already deploys this interceptor Lambda; it forwards the
+# caller's Authorization (JWT) header to Gateway targets so the semantic-layer
+# Lambda can read custom:account_id and scope every Cube query to the tenant.
+INTERCEPTOR_LAMBDA_NAME = f"{ENV_NAME}-gateway-interceptor"
 GATEWAY_NAME = f"SemanticLayerGateway-{int(time.time())}"
 LAMBDA_NAME = "semantic-layer-toolset-lambda"
 SEMANTIC_CONFIG_FILE = ROOT_DIR / 'semantic_config.env'
@@ -232,11 +237,35 @@ def create_gateway():
     )
     print(f"[OK] Execution role: {role_arn}")
 
+    # Resolve the gateway interceptor Lambda (deployed by the base/top-up stack).
+    # Without an interceptor the Gateway does NOT forward the Authorization header
+    # to the Lambda target, so the semantic Lambda can't read custom:account_id and
+    # every tenant would see global data. Multi-tenancy on the Cube path is enforced
+    # by the Lambda injecting an account_id filter into each Cube query (Cube itself
+    # connects to Aurora as the table owner and bypasses Postgres RLS — see the
+    # semantic-layer toolset Lambda), so propagating the JWT here is what makes
+    # tenant isolation work. Mirrors the main analytics Gateway's interceptor.
+    interceptor_configs = []
+    try:
+        lam = boto3.client('lambda', region_name=REGION)
+        interceptor_arn = lam.get_function(
+            FunctionName=INTERCEPTOR_LAMBDA_NAME
+        )['Configuration']['FunctionArn']
+        interceptor_configs = [{
+            'interceptor': {'lambda': {'arn': interceptor_arn}},
+            'interceptionPoints': ['REQUEST'],
+            'inputConfiguration': {'passRequestHeaders': True},
+        }]
+        print(f"[OK] Interceptor: {interceptor_arn} (propagates Authorization → target)")
+    except Exception as e:
+        print(f"⚠️  Could not resolve interceptor Lambda '{INTERCEPTOR_LAMBDA_NAME}': {e}")
+        print("    The semantic agent would NOT enforce tenant isolation without it.")
+
     # Create gateway
     print("Creating Gateway...")
     agentcore = boto3.client('bedrock-agentcore-control', region_name=REGION)
 
-    gateway = agentcore.create_gateway(
+    create_kwargs = dict(
         name=GATEWAY_NAME,
         roleArn=role_arn,
         protocolType='MCP',
@@ -244,6 +273,9 @@ def create_gateway():
         authorizerConfiguration=authorizer_config,
         description='AgentCore Gateway for Semantic Layer Agent (parallel stack)',
     )
+    if interceptor_configs:
+        create_kwargs['interceptorConfigurations'] = interceptor_configs
+    gateway = agentcore.create_gateway(**create_kwargs)
     gateway_id = gateway['gatewayId']
     gateway_url = gateway['gatewayUrl']
     print(f"[OK] Created Gateway: {gateway_id}")
@@ -521,22 +553,41 @@ def _attach_jwt_authorizer(runtime_id):
 
 
 def _get_runtime_arn():
-    """Get the runtime ARN for the semantic agent from agentcore list."""
+    """Get the runtime ARN for the semantic agent from the AgentCore control plane.
+
+    Uses the boto3 control-plane API (list_agent_runtimes) rather than the
+    `agentcore` CLI: the CLI has no stable `list` subcommand across toolkit
+    versions (newer builds raise "No such command 'list'"), which silently
+    returned None and left the UI with an empty REACT_APP_AGENT_RUNTIME_ARN.
+    The control-plane list is authoritative and version-independent.
+    """
     try:
-        result = subprocess.run(
-            ["agentcore", "list", "--output", "json"],
-            cwd=str(ROOT_DIR),
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            for agent in data.get('agents', []):
-                if agent.get('name') == RUNTIME_AGENT_NAME:
-                    return agent.get('arn', '')
-            # Fallback: return the first agent ARN if name doesn't match
-            agents = data.get('agents', [])
-            if agents:
-                return agents[-1].get('arn', '')
+        agentcore = boto3.client('bedrock-agentcore-control', region_name=REGION)
+        runtimes = []
+        paginator = None
+        try:
+            paginator = agentcore.get_paginator('list_agent_runtimes')
+        except Exception:
+            paginator = None
+        if paginator is not None:
+            for page in paginator.paginate():
+                runtimes.extend(page.get('agentRuntimes', []))
+        else:
+            resp = agentcore.list_agent_runtimes()
+            runtimes.extend(resp.get('agentRuntimes', []))
+            token = resp.get('nextToken')
+            while token:
+                resp = agentcore.list_agent_runtimes(nextToken=token)
+                runtimes.extend(resp.get('agentRuntimes', []))
+                token = resp.get('nextToken')
+        # Prefer the exact-name match; fall back to any runtime whose name
+        # starts with the agent name (it carries the AgentCore "-XXXX" suffix).
+        for rt in runtimes:
+            if rt.get('agentRuntimeName') == RUNTIME_AGENT_NAME:
+                return rt.get('agentRuntimeArn', '') or None
+        for rt in runtimes:
+            if str(rt.get('agentRuntimeName', '')).startswith(RUNTIME_AGENT_NAME):
+                return rt.get('agentRuntimeArn', '') or None
     except Exception as e:
         print(f"Note: Could not retrieve runtime ARN: {e}")
     return None

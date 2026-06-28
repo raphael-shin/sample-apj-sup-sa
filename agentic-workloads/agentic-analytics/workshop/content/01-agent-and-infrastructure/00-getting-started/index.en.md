@@ -82,6 +82,8 @@ export AWS_DEFAULT_REGION=us-east-1
 
 ## Explore the Codebase
 
+The same code is also on GitHub at :link[aws-samples/sample-apj-sup-sa]{href="https://github.com/aws-samples/sample-apj-sup-sa/tree/main/agentic-workloads/agentic-analytics" external=true} (the `agentic-workloads/agentic-analytics` directory) — handy if you want to browse, search, or copy files outside the Code Editor, or clone the project to keep after the event.
+
 Click the files icon on the top left in the Code Editor UI to view the directory. Here are the key files you'll work with throughout the workshop:
 
 ```
