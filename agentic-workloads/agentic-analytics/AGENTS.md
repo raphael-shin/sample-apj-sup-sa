@@ -109,7 +109,7 @@ cd infrastructure/scripts && bash package_for_workshop.sh
 
 ## Workshop Overlay System
 
-`workshop/code/` contains files with TODO placeholders that override `app/` files in the packaged repo ZIP. See `skills/overlay-management/SKILL.md` for rules.
+`workshop/code/` contains files with TODO placeholders that override `app/` files in the packaged repo ZIP. See `dev/skills/overlay-management/SKILL.md` for rules.
 
 **Critical rule:** When editing `app/` files that have overlays in `workshop/code/`, sync changes to both. If an overlay has no TODOs left, delete it.
 
@@ -133,12 +133,12 @@ cd infrastructure/scripts && bash package_for_workshop.sh
 | orion.moonshadow@example-mythicalunicorns.com | analyst | Mythical Unicorns |
 | aria.skybloom@example-mythicunicorns.com | rental_admin | Mythic Unicorns |
 
-## Known Issues
-
-See `.kiro/specs/known-issues.md` for open bugs and workarounds.
-
 ## Skills
 
-See `.kiro/skills/` for procedural skills:
+See `dev/skills/` for procedural skills:
 - `workshop-deployment` — Package, sync, and push to Workshop Studio
 - `overlay-management` — Manage workshop code overlays
+
+## Specs
+
+See `dev/specs/agentic-analytics/` for the project spec (`requirements.md`, `design.md`, `tasks.md`).

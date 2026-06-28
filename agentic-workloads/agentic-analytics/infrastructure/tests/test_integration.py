@@ -88,9 +88,8 @@ class TestGlueCatalogIntegration:
     # NOTE: the glue-catalog-metadata.json export checks and the semantic-search
     # (generate_embeddings) unit tests were removed when the dev-only bootstrap
     # scripts (register_glue_tables.py / generate_embeddings.py / init_database.py)
-    # were retired in favour of CFN custom resources. Those scripts + their unit
-    # tests now live under dev/ (dev/evaluation/, dev/legacy-tests/) and are no
-    # longer part of the shipped infrastructure test suite.
+    # were retired in favour of CFN custom resources. They are no longer part of
+    # the shipped infrastructure test suite.
 
 
 class TestEndToEndWorkflow:

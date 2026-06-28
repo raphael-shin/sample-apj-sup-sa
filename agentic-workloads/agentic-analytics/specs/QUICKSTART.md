@@ -110,8 +110,8 @@ package source in the local venv.
   agent-side — needs `scripts/deploy_backend.sh --agent-only`). The
   processor-side half is local-only and live the moment you restart `bot.py`.
 - ❌ Memory store may hold poisoned JSON-block events from earlier testing. The
-  new loader flattens them, but if behavior is weird, clear the memory (see
-  TRIAGE doc) or just use a fresh `runtimeSessionId`.
+  new loader flattens them, but if behavior is weird, clear the memory or just
+  use a fresh `runtimeSessionId`.
 - ❌ `specs/voice-integration.md` §7.5 still suggests session_id in the JSON
   payload — wrong, it goes on the boto3 call as `runtimeSessionId`. Minor doc nit.
 
@@ -238,13 +238,12 @@ print("Turn 2:", call("What is my favorite unicorn breed?", sid)[:200])
 | `server/tests/conftest.py` | Skip-guard: auto-skips integration tests if `.env` vars missing |
 | `server/auth.py` | Cognito ROPC token helper |
 | `server/unicorn_rental_voice.sop.md` | Voice SOP (text rules, already strict) |
-| `server/MILESTONE_3_README.md` | Last working state, smoke-test recipe (deploy steps OBSOLETE — use deploy_backend.sh) |
-| `resources/agentic-analytics-workshop/app/agentcore_strands/unicorn_rental_agent.py` | Deployed Strands agent (modified — plain-text memory hooks). Agent redeploy needed. |
-| `resources/agentic-analytics-workshop/app/agentcore_strands/agent/unicorn_rental_semantic_agent.py` | Variant agent (same plain-text fix mirrored) |
-| `resources/agentic-analytics-workshop/dev/issues/memory-replay-re-executes-tools.md` | Documents Bug B. NOTE: its prescribed "full content blocks" fix is the one we abandoned (caused silent hang). |
-| `resources/agentic-analytics-workshop/infrastructure/stacks/agentcore-stack.yaml` | Memory + Runtime CFN. Memory resource ~lines 1120-1125 (STM-only, 7-day expiry). |
-| `specs/TRIAGE-2026-06-12.md` | Live-test triage notes (UTF-8 fix done; canned-summary + guardrail still open) |
 | `.mcp.json` + `.claude/settings.json` | MCP servers (committed). `bedrock-agentcore-mcp-server`, `aws-knowledge`, `pipecat-docs`, `deepgram-docs`. |
+
+> ⚠️ **Historical note:** this doc predates the repo restructure. Many paths it
+> cites (`server/`, `resources/agentic-analytics-workshop/`) no longer exist —
+> voice now lives under `app/voice/` and the agent under
+> `app/agentcore_strands/`. Kept for the design rationale, not the file paths.
 
 ## Spec edits needed (not yet done)
 

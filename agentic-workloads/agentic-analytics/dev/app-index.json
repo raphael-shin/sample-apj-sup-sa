@@ -28,7 +28,7 @@
     "workshop/": "Workshop Studio configuration and assets",
     "workshop/content/": "Workshop guide pages (Steps 0-10 + semantic layer)",
     "workshop/code/": "Workshop code overlay with TODO blanks (agent, exercises, top-up CFN, Makefile)",
-    "dev/": "Maintainer-only files (unshipped): app-index.json, the Strands Evals harness (dev/evaluation/), and archived bootstrap tests (dev/legacy-tests/)"
+    "dev/": "Maintainer-only files (unshipped): app-index.json, the Strands Evals harness (dev/evaluation/), the project spec (dev/specs/), and maintainer skills (dev/skills/)"
   },
   "files": [
     {
@@ -176,15 +176,15 @@
       "summary": "Cube semantic-layer lab (documented script exception): deploys the semantic-layer toolset target to the Gateway."
     },
     {
-      "path": ".kiro/specs/agentic-analytics/requirements.md",
+      "path": "dev/specs/agentic-analytics/requirements.md",
       "summary": "13 requirements with acceptance criteria covering natural language processing, multi-tenant isolation, core data access, analytics tools, write operations, and infrastructure automation"
     },
     {
-      "path": ".kiro/specs/agentic-analytics/design.md",
+      "path": "dev/specs/agentic-analytics/design.md",
       "summary": "Architecture design document with implementation status, component diagram, data flow, and infrastructure gap analysis"
     },
     {
-      "path": ".kiro/specs/agentic-analytics/tasks.md",
+      "path": "dev/specs/agentic-analytics/tasks.md",
       "summary": "12 task groups implementation plan for CloudFormation, Glue integration, embeddings, and test coverage"
     },
     {
@@ -233,7 +233,7 @@
     },
     {
       "path": "dev/README.md",
-      "summary": "Explains that dev/ is maintainer-only and excluded from both deploy paths; documents dev/evaluation/ and dev/legacy-tests/."
+      "summary": "Explains that dev/ is maintainer-only and excluded from both deploy paths; documents dev/evaluation/, dev/specs/, and dev/skills/."
     },
     {
       "path": "app/agentcore_strands/tools/prebaked_sql_toolset_lambda.py",
@@ -256,11 +256,11 @@
       "summary": "CC0 1.0 Universal license for synthetic dataset"
     },
     {
-      "path": ".kiro/skills/workshop-deployment/SKILL.md",
+      "path": "dev/skills/workshop-deployment/SKILL.md",
       "summary": "Agent Skill: step-by-step procedure to package code, sync S3 assets, and push content to Workshop Studio"
     },
     {
-      "path": ".kiro/skills/overlay-management/SKILL.md",
+      "path": "dev/skills/overlay-management/SKILL.md",
       "summary": "Agent Skill: rules for managing workshop code overlays (TODO files that override app/ in packaged ZIP)"
     }
   ]
