@@ -61,7 +61,7 @@ The :link[SaaS Lens]{href="https://docs.aws.amazon.com/wellarchitected/latest/sa
 
 ## Explore More
 
-::alert[**Take the code with you.** The complete source for everything you built — agent, Lambda toolsets, CloudFormation, UI, and this workshop content — is open source at :link[aws-samples/sample-apj-sup-sa]{href="https://github.com/aws-samples/sample-apj-sup-sa/tree/main/agentic-workloads/agentic-analytics" external=true} (the `agentic-workloads/agentic-analytics` directory). Clone it to keep after your event account expires, and adapt the patterns to your own SaaS.]{type="success"}
+::alert[**Take the code with you.** The complete source for everything you built — agent, Lambda toolsets, CloudFormation, UI, and this workshop content — is available at :link[aws-samples/sample-apj-sup-sa]{href="https://github.com/aws-samples/sample-apj-sup-sa/tree/main/agentic-workloads/agentic-analytics" external=true} (the `agentic-workloads/agentic-analytics` directory). Clone it to keep after your event account expires, and adapt the patterns to your own SaaS.]{type="success"}
 
 ### Extend This Workshop
 - Improve agent SOP to handle more scenarios

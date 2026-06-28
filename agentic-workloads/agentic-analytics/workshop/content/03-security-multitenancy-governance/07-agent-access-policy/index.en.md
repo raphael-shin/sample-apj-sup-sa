@@ -174,8 +174,6 @@ def get_db_connection(rls_context=None):
 
 This pattern is the same in all three Lambda toolsets. The `rls_context` is extracted from the JWT by `lambda_handler` and passed through the call chain. When the Lambda connects as `app_user` (after the credential switch in Step 7.2), PostgreSQL RLS policies read these session variables to filter rows by tenant.
 
-::alert[**See the full RLS implementation on GitHub:** the Lambda toolset source and the schema's `CREATE POLICY` definitions live in the :link[aws-samples/sample-apj-sup-sa]{href="https://github.com/aws-samples/sample-apj-sup-sa/tree/main/agentic-workloads/agentic-analytics" external=true} repo — see `app/agentcore_strands/tools/` for the Lambdas and `dataset/schema/schema.sql` for the row-level-security policies. Handy for reviewing exactly how tenant isolation is enforced end to end.]{type="info"}
-
 ### Step 7.4: Examine the Gateway Interceptor
 
 The Lambda tools now know how to SET session variables from JWT claims — but the JWT needs to reach the Lambda first. By default, the Gateway authenticates the request but does **not** forward the Authorization header to Lambda targets.
@@ -283,6 +281,8 @@ The Cedar policy doesn't just *refuse* the booking tool — it makes it **invisi
 │                                                          │
 └─────────────────────────────────────────────────────────┘
 ```
+
+::alert[**This is one of the most important steps in the workshop** — multi-tenant isolation and access control are core to a well-architected SaaS agent. To study the full implementation, browse the complete project at :link[aws-samples/sample-apj-sup-sa]{href="https://github.com/aws-samples/sample-apj-sup-sa/tree/main/agentic-workloads/agentic-analytics" external=true}. The repository contains the complete **sample code** (agent, Lambda toolsets, Cedar policies, RLS schema), **this very workshop's content**, and a **demo mode** that deploys the whole system end to end in an AWS account — a useful reference for adapting these security patterns to your needs.]{type="info"}
 
 ## Verification
 
