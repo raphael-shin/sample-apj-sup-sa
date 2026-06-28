@@ -25,16 +25,15 @@ Paths inside these scripts are relative to this folder: `../../dataset/validatio
 and `../../app/agentcore_strands/gateway_config.json`. Run them from anywhere
 (`python3 dev/evaluation/run_evaluation.py`) — they resolve paths from `__file__`.
 
-## `dev/legacy-tests/` — archived unit tests for the retired bootstrap scripts
+## `dev/specs/` — project specification
 
-When the one-off data-bootstrap scripts (`init_database.py`, `register_glue_tables.py`,
-`generate_embeddings.py`) were retired in favour of CloudFormation custom resources
-(`custom-resource-lambdas/{database_init,glue_crawler_trigger,bedrock_kb_ingestion}`),
-their unit tests were preserved here rather than deleted.
+`dev/specs/agentic-analytics/` holds the spec the sample was built from:
+`requirements.md`, `design.md`, and `tasks.md`. Reference/authoring material only —
+nothing here is consumed at build or runtime.
 
-- `test_init_database.py`, `test_generate_embeddings.py`
+## `dev/skills/` — procedural skills for maintainers
 
-> ⚠️ These tests `import` the now-removed scripts and will **not** collect as-is.
-> They are retained for reference / future revival only. The shipped suite under
-> `infrastructure/tests/` (`test_integration.py`, `test_workshop_deployment.py`)
-> no longer depends on the bootstrap scripts.
+Step-by-step playbooks for recurring maintenance tasks:
+
+- `workshop-deployment/SKILL.md` — package, sync assets to S3, and push to Workshop Studio.
+- `overlay-management/SKILL.md` — keep `workshop/code/` TODO overlays in sync with `app/`.
