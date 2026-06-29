@@ -162,26 +162,35 @@ for details (including the agentcore voice teardown caveat — VPC ENIs reclaim 
 
 ```
 ├── app/
-│   ├── agentcore_strands/       # Strands agent, Lambda tools, deploy scripts
-│   │   ├── tools/               # Lambda toolsets (prebaked SQL, API, custom SQL, semantic layer)
-│   │   ├── infra/               # Gateway, toolset, and observability deployment
-│   │   ├── policy/              # Cedar policy deployment and pre-token Lambda
-│   │   └── guardrails/          # Bedrock Guardrail deployment
+│   ├── agentcore_strands/       # Strands agent + Lambda tools
+│   │   ├── unicorn_rental_agent.py          # main agent entrypoint
+│   │   ├── unicorn_rental_analytics.sop.md  # SOP (one file, text/voice mode-conditional)
+│   │   ├── tools/               # Lambda toolsets (prebaked SQL, API integration, custom SQL, semantic layer)
+│   │   ├── infra/               # Cube lab scripts (deploy_cube_models, deploy_semantic_layer_*) + the Gateway interceptor Lambda
+│   │   ├── agent/               # semantic-layer agent variant (Cube lab)
+│   │   ├── ui/                  # Amplify hosting deploy helper (demo mode)
+│   │   └── tests/               # agent unit tests
 │   ├── ui/                      # React frontend (text chat + charts + optional voice)
 │   └── voice/                   # Pipecat voice bot (optional) — runs as its own AgentCore Runtime
 ├── infrastructure/
-│   ├── stacks/                  # CloudFormation templates (nested stacks, incl. voice-agentcore-stack.yaml)
-│   ├── custom-resource-lambdas/ # Custom Resource Lambda handlers
-│   ├── voice-proxy/             # JWT start-proxy for the pipecat-cloud voice mode (optional)
-│   └── scripts/                 # Deployment and utility scripts
+│   ├── stacks/                  # CloudFormation templates (nested stacks; incl. agentcore-topup-stack.yaml, voice-agentcore-stack.yaml)
+│   ├── custom-resource-lambdas/ # Custom Resource Lambda handlers (DB init, Glue crawler, Bedrock KB ingestion)
+│   ├── voice-proxy/             # JWT signaling/start proxy for the voice modes (optional)
+│   ├── voice-pcc-cr/            # Pipecat Cloud custom resource (pipecat-cloud voice mode, optional)
+│   ├── config/                  # deployment-config sample
+│   ├── scripts/                 # Deployment and packaging scripts
+│   └── tests/                   # infrastructure tests
 ├── workshop/
-│   ├── content/                 # Workshop guide (Steps 0–10)
-│   ├── code/                    # Code overlays with TODO placeholders
+│   ├── content/                 # Workshop guide (Steps 0–10 + optional Cube & Voice, grouped into modules)
+│   ├── code/                    # Code overlays with TODO placeholders (incl. the participant Makefile + top-up stack)
 │   └── static/images/           # Architecture diagrams
 ├── dataset/                     # → symlink to unicorn-rental-dataset
 ├── exercises/                   # Learning exercises (basic_agent.py)
-└── common/                      # Shared utilities
+├── common/                      # Shared utilities (build/amplify helpers)
+└── dev/                         # Maintainer-only tooling (NOT shipped): eval harness, specs, skills, app-index.json
 ```
+
+> **Note on the AgentCore layer:** Gateway, Runtime, Memory, the toolset Lambdas, the Cedar policy engine, and the Bedrock Guardrail are all **CloudFormation resources** in `infrastructure/stacks/agentcore-topup-stack.yaml` (workshop) / `agentcore-stack.yaml` (demo) — not standalone `deploy_*.py` scripts. The pre-token Lambda lives in `cognito-stack.yaml`.
 
 ## The Scenario: Timely-Unicorn
 

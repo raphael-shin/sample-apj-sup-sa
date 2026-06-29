@@ -14,8 +14,8 @@ Both paths invoke the same Strands agent with the same per-user JWT, so RBAC/RLS
 
 ## Two Deployment Modes
 
-- **Workshop mode** (primary): Deploys base infrastructure only (Aurora, Cognito, Glue, Bedrock KB, EC2 Code Editor) via CFN `DeployMode=workshop`. Participants then deploy ONE **AgentCore top-up stack** (`infrastructure/stacks/agentcore-topup-stack.yaml`, shipped to the EC2 box via the `workshop/code/` overlay) and build the agent layer step-by-step by uncommenting one fenced section per lab step and running `make deploy` — no `agentcore` CLI, no `deploy_*.py` scripts (those are demo-mode only). The participant-facing copy is commented down to a Step-2 baseline; `make build` rebuilds the agent image after code edits. Documented script exceptions: the optional Cube lab and `agentcore eval` (Step 10).
-- **Demo mode** (under construction): Deploys everything including AgentCore Gateway + Amplify UI. CFN `DeployMode=demo`.
+- **Workshop mode** (primary): Deploys base infrastructure only (Aurora, Cognito, Glue, Bedrock KB, EC2 Code Editor) via CFN `DeployMode=workshop`. Participants then deploy ONE **AgentCore top-up stack** (`infrastructure/stacks/agentcore-topup-stack.yaml`, shipped to the EC2 box via the `workshop/code/` overlay) and build the agent layer step-by-step by uncommenting one fenced section per lab step and running `make deploy` — no `agentcore` CLI, no imperative `deploy_*.py` scripts. The participant-facing copy is commented down to a Step-2 baseline; `make build` rebuilds the agent image after code edits. Documented script exceptions: the optional Cube lab (`infra/deploy_cube_models.py`, `deploy_semantic_layer_*.py`) and `agentcore eval` (Step 10).
+- **Demo mode**: Deploys everything in one shot — base infra + the AgentCore layer (Gateway, Runtime, Memory, toolsets, Cedar, Guardrail) + Amplify-hosted UI — via `infrastructure/scripts/deploy_backend.sh` (nested CFN, `DeployMode=demo`). `--agent-only` / `--voice-only` give fast re-iterate paths.
 
 ## Architecture
 
@@ -23,14 +23,14 @@ Both paths invoke the same Strands agent with the same per-user JWT, so RBAC/RLS
             ┌─ Text: React UI ──────────────────────────────┐
 User asks ──┤                                                 ├─► AgentCore Runtime (Strands Agent + SOP + Memory)
             └─ Voice: Mic → Pipecat (Deepgram STT/TTS) ──────┘         → MCP Gateway (Cedar Policy + Interceptor)
-                                                                          → PrebakedSQL Lambda (27 tools, DB Views)
+                                                                          → PrebakedSQL Lambda (29 tools, DB Views)
                                                                           → APIInteg Lambda (create_booking)
                                                                           → CustomSQL Lambda (Glue schema + Bedrock KB RAG)
                                                                           → CodeInterpreter (matplotlib → S3 → <chart> tag)
                                                                               → Aurora PostgreSQL (RLS by tenant)
 ```
 
-Both front-ends carry the user's Cognito JWT as `gateway_token` and the SAME app session id as `runtimeSessionId`, so one conversation can interleave text and voice turns against one Memory thread.
+Both front-ends send the user's Cognito JWT as the `Authorization: Bearer` request header (the runtime's CustomJWTAuthorizer validates it and passes it through to the agent; there is no `gateway_token` payload field) and the SAME app session id as `runtimeSessionId`, so one conversation can interleave text and voice turns against one Memory thread.
 
 ### Charts (both modes)
 
@@ -45,7 +45,9 @@ The agent renders charts in an AgentCore **Code Interpreter** sandbox (matplotli
 | Main agent | `app/agentcore_strands/unicorn_rental_agent.py` |
 | SOP (one file, mode-conditional) | `app/agentcore_strands/unicorn_rental_analytics.sop.md` |
 | Lambda tools | `app/agentcore_strands/tools/*.py` |
-| Deploy scripts (demo mode) | `app/agentcore_strands/infra/deploy_*.py` |
+| Cube lab scripts (documented exception) | `app/agentcore_strands/infra/deploy_cube_models.py`, `deploy_semantic_layer_{toolset,stack}.py` |
+| Gateway interceptor Lambda | `app/agentcore_strands/infra/interceptor_lambda.py` |
+| Semantic-layer agent variant | `app/agentcore_strands/agent/unicorn_rental_semantic_agent.py` |
 | Workshop AgentCore top-up | `infrastructure/stacks/agentcore-topup-stack.yaml` (canonical) + `workshop/code/app/agentcore_strands/{agentcore-topup-stack.yaml,Makefile}` (fenced participant copy) |
 | CFN stacks | `infrastructure/stacks/*.yaml` |
 | React UI | `app/ui/` |
@@ -71,7 +73,10 @@ bash infrastructure/scripts/deploy_backend.sh
 bash infrastructure/scripts/deploy_backend.sh --agent-only
 
 # Workshop mode — participant edits ONE template then redeploys (on EC2 Code Editor)
-cd app/agentcore_strands          # holds the Makefile + agentcore-topup-stack.yaml
+# On the Code Editor box the workshop/code/ overlay has placed the Makefile +
+# agentcore-topup-stack.yaml into app/agentcore_strands/ (in this repo they live in
+# workshop/code/app/agentcore_strands/ and infrastructure/stacks/).
+cd app/agentcore_strands
 make deploy                       # deploy/redeploy the AgentCore top-up stack
 make build                        # rebuild the agent image after a code edit
 make outputs                      # show GatewayUrl / AgentRuntimeArn
@@ -87,7 +92,7 @@ cd app/voice && uv sync && uv run bot.py --transport daily
 # (agentcore = Pipecat on its own AgentCore Runtime, WebRTC+KVS TURN; fast iterate with
 #  deploy_backend.sh --voice-only. pipecat-cloud also needs: deploy_voice_pcc.sh.) See DEPLOYMENT.md.
 
-# Workshop packaging (see skills/workshop-deployment/)
+# Workshop packaging (see dev/skills/workshop-deployment/)
 cd infrastructure/scripts && bash package_for_workshop.sh
 ```
 
