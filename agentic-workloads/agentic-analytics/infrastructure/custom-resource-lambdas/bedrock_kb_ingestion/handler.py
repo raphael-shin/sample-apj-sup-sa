@@ -107,7 +107,11 @@ def create_kb_role(kb_name, aurora_secret_arn, kb_docs_bucket=None):
     if kb_docs_bucket:
         statements.append({
             "Effect": "Allow",
-            "Action": ["s3:GetObject", "s3:ListBucket"],
+            # GetBucketLocation is REQUIRED: without it Bedrock's ingestion S3 client
+            # can't resolve the bucket region, falls back to the global endpoint, and
+            # gets 301 PermanentRedirect ("must be addressed using the specified endpoint")
+            # on every ingestion in us-east-1.
+            "Action": ["s3:GetObject", "s3:ListBucket", "s3:GetBucketLocation"],
             "Resource": [
                 f"arn:aws:s3:::{kb_docs_bucket}",
                 f"arn:aws:s3:::{kb_docs_bucket}/*"
@@ -381,7 +385,29 @@ def wait_for_data_source(kb_id, ds_id, timeout=120):
 
 
 def start_ingestion(kb_id, ds_id):
-    """Start ingestion job for S3 data source."""
+    """Start ingestion job for S3 data source.
+
+    Wraps the start + wait in an OUTER retry: a freshly-created S3 docs bucket can
+    return 301 PermanentRedirect to Bedrock's data-source reader for a minute or two
+    until the bucket's regional endpoint fully propagates, which surfaces as a FAILED
+    ingestion job (not a start_ingestion_job exception). Retrying the whole job clears it.
+    """
+    for outer in range(6):  # up to ~6 tries; bucket endpoint propagates within ~1-2 min
+        result = _run_one_ingestion(kb_id, ds_id)
+        if result == 'COMPLETE':
+            return True
+        # result is the failure-reason string; retry only the transient S3-endpoint race
+        if ('must be addressed using the specified endpoint' in result
+                or 'PermanentRedirect' in result or 'Status Code: 301' in result) and outer < 5:
+            print(f"  Ingestion hit S3 endpoint-propagation race (try {outer + 1}/6): {result[:160]} — retrying in 20s")
+            time.sleep(20)
+            continue
+        raise Exception(f"Ingestion failed: {result}")
+    raise Exception("Ingestion did not complete after retries")
+
+
+def _run_one_ingestion(kb_id, ds_id):
+    """Start one ingestion job and wait for it. Returns 'COMPLETE' or the failure-reason string."""
     print(f"Starting ingestion job...")
 
     # The Aurora RDS Data API (HttpEndpoint) can take a short while to become
@@ -407,11 +433,11 @@ def start_ingestion(kb_id, ds_id):
             raise
     if response is None:
         raise RuntimeError("start_ingestion_job did not succeed after retries")
-    
+
     job_id = response['ingestionJob']['ingestionJobId']
     status = response['ingestionJob']['status']
     print(f"  Ingestion job started: {job_id} ({status})")
-    
+
     # Wait for completion
     for _ in range(60):
         time.sleep(10)
@@ -423,15 +449,15 @@ def start_ingestion(kb_id, ds_id):
         status = check['ingestionJob']['status']
         stats = check['ingestionJob'].get('statistics', {})
         print(f"  Status: {status} | Scanned: {stats.get('numberOfDocumentsScanned', 0)} | Indexed: {stats.get('numberOfNewDocumentsIndexed', 0)} | Failed: {stats.get('numberOfDocumentsFailed', 0)}")
-        
+
         if status == 'COMPLETE':
             print(f"[OK] Ingestion complete")
-            return response
+            return 'COMPLETE'
         elif status == 'FAILED':
             reason = check['ingestionJob'].get('failureReasons', ['Unknown'])
-            raise Exception(f"Ingestion failed: {reason}")
-    
-    raise Exception("Ingestion timed out")
+            return str(reason)
+
+    return 'Ingestion timed out'
 
 
 def load_content_from_s3(bucket, key):
