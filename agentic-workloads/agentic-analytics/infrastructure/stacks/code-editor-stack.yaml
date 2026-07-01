@@ -388,7 +388,8 @@ Resources:
                   - arn:aws:s3:::bedrock-agentcore-*
                   - arn:aws:s3:::bedrock-agentcore-*/*
 
-              # EC2 - For VPC config lookups
+              # EC2 - For VPC config lookups + resolving the Cube private IP by tag
+              # (cube-resolve.sh points the cube-tunnel socat forwarder at Cube)
               - Effect: Allow
                 Action:
                   - ec2:DescribeVpcs
@@ -397,6 +398,7 @@ Resources:
                   - ec2:CreateNetworkInterface
                   - ec2:DeleteNetworkInterface
                   - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeInstances
                 Resource: '*'
 
   CodeEditorInstanceProfile:
@@ -518,7 +520,7 @@ Resources:
           chown "$CODE_EDITOR_USER:$CODE_EDITOR_USER" "/home/$CODE_EDITOR_USER/.code-editor-server/data/token"
           chmod 600 "/home/$CODE_EDITOR_USER/.code-editor-server/data/token"
 
-          # Nginx config
+          # Nginx config (Code Editor + React UI proxies, unchanged).
           cat > /etc/nginx/conf.d/code-editor.conf << 'NGINXEOF'
           server {
               listen 80;
@@ -548,6 +550,62 @@ Resources:
           # Disable default server block that conflicts with our conf.d config
           sed -i '/^    server {/,/^    }/s/^/#/' /etc/nginx/nginx.conf
           nginx -t && systemctl enable nginx && systemctl start nginx
+
+          # --- Cube Playground access (private EC2) ---
+          # The Cube Playground SPA serves assets from absolute "/" paths, so it cannot
+          # be reverse-proxied under a subpath. Instead we run a TCP forwarder so
+          # localhost:4000 on this box transparently maps to the private Cube:4000 — the
+          # code-server "Ports" panel then exposes :4000 to the participant's browser at
+          # ROOT, where the SPA (and its websocket) works correctly.
+          #   * cube-resolve.sh writes the discovered Cube IP into /etc/cube-tunnel.env
+          #   * cube-tunnel.service runs socat in the FOREGROUND (long-lived; not a
+          #     backgrounded child of a oneshot, which systemd would reap)
+          #   * a timer re-resolves until Cube (which deploys after this box) appears
+          dnf install -y -q socat || true
+          # cube-resolve.sh is delivered base64-encoded so Fn::Sub never parses its
+          # bash syntax. It looks up the Cube instance by Name tag, writes CUBE_IP into
+          # /etc/cube-tunnel.env, and restarts cube-tunnel.service.
+          CUBE_RESOLVE_B64='IyEvYmluL2Jhc2gKUkVHSU9OPSIke0NVQkVfUkVHSU9OOi11cy1lYXN0LTF9IgpFTlZfTkFNRT0iJHtDVUJFX0VOVk5BTUU6LWFnZW50aWMtYW5hbHl0aWNzfSIKSVA9JChhd3MgZWMyIGRlc2NyaWJlLWluc3RhbmNlcyAtLXJlZ2lvbiAiJFJFR0lPTiIgLS1maWx0ZXJzICJOYW1lPXRhZzpOYW1lLFZhbHVlcz0kRU5WX05BTUUtY3ViZSIgIk5hbWU9aW5zdGFuY2Utc3RhdGUtbmFtZSxWYWx1ZXM9cnVubmluZyIgLS1xdWVyeSAnUmVzZXJ2YXRpb25zW10uSW5zdGFuY2VzW10uUHJpdmF0ZUlwQWRkcmVzcyB8IFswXScgLS1vdXRwdXQgdGV4dCAyPi9kZXYvbnVsbCkKaWYgWyAtbiAiJElQIiBdICYmIFsgIiRJUCIgIT0gIk5vbmUiIF07IHRoZW4KICBlY2hvICJDVUJFX0lQPSRJUCIgPiAvZXRjL2N1YmUtdHVubmVsLmVudgogIHN5c3RlbWN0bCByZXN0YXJ0IGN1YmUtdHVubmVsLnNlcnZpY2UgMj4vZGV2L251bGwgfHwgdHJ1ZQogIGVjaG8gImN1YmUtcmVzb2x2ZSAtPiAkSVAiCmVsc2UKICBlY2hvICJjdWJlIG5vdCBmb3VuZCB5ZXQiCmZpCg=='
+          echo "$CUBE_RESOLVE_B64" | base64 -d > /usr/local/bin/cube-resolve.sh
+          chmod +x /usr/local/bin/cube-resolve.sh
+          echo "CUBE_IP=127.0.0.1" > /etc/cube-tunnel.env
+          # Long-lived socat tunnel: localhost:4000 -> Cube:4000 (reads CUBE_IP from env file)
+          cat > /etc/systemd/system/cube-tunnel.service << 'TUNEOF'
+          [Unit]
+          Description=TCP tunnel localhost:4000 -> private Cube EC2:4000 (for code-server Ports panel)
+          After=network-online.target
+          [Service]
+          EnvironmentFile=/etc/cube-tunnel.env
+          ExecStart=/usr/bin/socat TCP-LISTEN:4000,fork,reuseaddr TCP:${!CUBE_IP}:4000
+          Restart=always
+          RestartSec=5
+          [Install]
+          WantedBy=multi-user.target
+          TUNEOF
+          # Resolver service + timer (re-resolve until Cube appears, then keep fresh)
+          cat > /etc/systemd/system/cube-resolve.service << SVCEOF
+          [Unit]
+          Description=Resolve private Cube IP and (re)point the cube-tunnel
+          After=network-online.target
+          [Service]
+          Type=oneshot
+          Environment=CUBE_REGION=${AWS::Region}
+          Environment=CUBE_ENVNAME=${EnvironmentName}
+          ExecStart=/usr/local/bin/cube-resolve.sh
+          SVCEOF
+          cat > /etc/systemd/system/cube-resolve.timer << 'TMREOF'
+          [Unit]
+          Description=Re-resolve Cube IP every 2 min until it is up
+          [Timer]
+          OnBootSec=45
+          OnUnitActiveSec=120
+          [Install]
+          WantedBy=timers.target
+          TMREOF
+          systemctl daemon-reload
+          systemctl enable cube-tunnel.service
+          systemctl enable --now cube-resolve.timer
+          systemctl start cube-resolve.service || true
 
           # Code Editor systemd service (use explicit user, not %i template)
           cat > /etc/systemd/system/code-editor.service << SVCEOF
@@ -789,3 +847,7 @@ Outputs:
   CloudFrontDomain:
     Description: CloudFront domain
     Value: !GetAtt CloudFrontDistribution.DomainName
+
+  CodeEditorSecurityGroupId:
+    Description: Code Editor SG (Cube allows inbound on 4000 from this so the nginx proxy can reach the private Cube)
+    Value: !Ref CodeEditorSecurityGroup

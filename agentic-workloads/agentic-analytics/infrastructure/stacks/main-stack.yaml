@@ -281,15 +281,22 @@ Resources:
   CubeStack:
     Type: AWS::CloudFormation::Stack
     Condition: IsWorkshop
+    # DependsOn CodeEditorStack: Cube's SG allows inbound 4000 only from the Code
+    # Editor SG (no public access), so the Code Editor SG must exist first. The
+    # Code Editor reaches Cube's private IP at RUNTIME (tag lookup), so there is no
+    # reverse build-time dependency — no cycle.
     DependsOn:
       - DatabaseInitStack
+      - CodeEditorStack
     Properties:
       TemplateURL: !Sub https://${ArtifactsBucket}.s3.${AWS::Region}.amazonaws.com/${ArtifactsPrefix}templates/cube-stack.yaml
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         VpcId: !GetAtt AuroraStack.Outputs.VpcId
-        PublicSubnet1Id: !GetAtt AuroraStack.Outputs.PublicSubnet1Id
+        PrivateSubnet1Id: !GetAtt AuroraStack.Outputs.PrivateSubnet1Id
         LambdaSecurityGroupId: !GetAtt AuroraStack.Outputs.LambdaSecurityGroupId
+        CodeEditorSecurityGroupId: !GetAtt CodeEditorStack.Outputs.CodeEditorSecurityGroupId
+        VPCEndpointSecurityGroupId: !GetAtt AuroraStack.Outputs.VPCEndpointSecurityGroupId
         AuroraSecurityGroupId: !GetAtt AuroraStack.Outputs.AuroraSecurityGroupId
         DatabaseSecretArn: !GetAtt AuroraStack.Outputs.DatabaseSecretArn
         AuroraEndpoint: !GetAtt AuroraStack.Outputs.AuroraClusterEndpoint

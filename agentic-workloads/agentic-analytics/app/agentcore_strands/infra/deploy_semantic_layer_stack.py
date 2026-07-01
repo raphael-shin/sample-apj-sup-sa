@@ -19,6 +19,7 @@ Steps:
 """
 
 import boto3
+from botocore.exceptions import ClientError
 import json
 import logging
 import os
@@ -345,7 +346,11 @@ def register_target(gateway_id):
     except Exception as e:
         print(f"Note: {e}")
 
-    response = agentcore.create_gateway_target(
+    # The Gateway execution role was just created; its trust policy can take a few
+    # seconds to propagate. Until it does, CreateGatewayTarget fails with a
+    # ValidationException ("Gateway service is not authorized to perform AssumeRole
+    # on Gateway role"). Retry with backoff instead of making the participant re-run.
+    create_target_kwargs = dict(
         gatewayIdentifier=gateway_id,
         name="SemanticLayer",
         targetConfiguration={
@@ -360,6 +365,22 @@ def register_target(gateway_id):
             {'credentialProviderType': 'GATEWAY_IAM_ROLE'}
         ]
     )
+    response = None
+    for attempt in range(1, 13):  # ~12 * 5s = up to 60s for IAM to propagate
+        try:
+            response = agentcore.create_gateway_target(**create_target_kwargs)
+            break
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            msg = e.response.get('Error', {}).get('Message', str(e))
+            if code == 'ValidationException' and 'AssumeRole' in msg and attempt < 12:
+                print(f"  Gateway role trust not propagated yet — retrying ({attempt}/12)...")
+                time.sleep(5)
+                continue
+            raise
+    if response is None:
+        print("❌ Target registration failed after retries (Gateway role AssumeRole trust).")
+        sys.exit(1)
 
     target_id = response['targetId']
     print(f"[OK] Created SemanticLayer target: {target_id}")
@@ -388,12 +409,49 @@ def deploy_runtime(gateway_url):
     # We temporarily set GATEWAY_URL in config.env, deploy, then restore.
     # A cleaner approach: set it as an env override via agentcore CLI.
 
-    # Clean up any previous agentcore config (may have stale container settings)
+    # The runtime build uses `uv` (the agentcore CLI resolves deps + builds the
+    # image context with it). If it's missing, `agentcore configure` silently
+    # produces an incomplete build config and the failure only surfaces minutes
+    # later as a cryptic CodeBuild "no Dockerfile" error. Fail fast with the fix.
+    import shutil as _shutil
+    if _shutil.which("uv") is None:
+        print("❌ `uv` is not installed, but the runtime build needs it.")
+        print("   Install it, then re-run this script:")
+        print("     curl -LsSf https://astral.sh/uv/install.sh | sh")
+        print('     export PATH="$HOME/.local/bin:$PATH"')
+        sys.exit(1)
+
+    # Clean up any previous agentcore config (may have stale container settings).
+    # Two places hold state: the per-agent dir AND the CLI's global
+    # .bedrock_agentcore.yaml. A failed/partial earlier run can leave the agent
+    # registered there as deployment_type=container, which blocks a retry with
+    # "Cannot change deployment type from 'container' to 'direct_code_deploy'".
+    # Remove BOTH so a re-run is always clean.
+    import shutil
     agentcore_config_dir = ROOT_DIR / '.bedrock_agentcore' / RUNTIME_AGENT_NAME
     if agentcore_config_dir.exists():
-        import shutil
         shutil.rmtree(agentcore_config_dir)
         print(f"[OK] Cleaned up old config: {agentcore_config_dir}")
+
+    agentcore_yaml = ROOT_DIR / '.bedrock_agentcore.yaml'
+    if agentcore_yaml.exists():
+        try:
+            import yaml as _yaml
+            state = _yaml.safe_load(agentcore_yaml.read_text()) or {}
+            agents = state.get('agents', {})
+            if RUNTIME_AGENT_NAME in agents:
+                agents.pop(RUNTIME_AGENT_NAME, None)
+                if state.get('default_agent') == RUNTIME_AGENT_NAME:
+                    state['default_agent'] = next(iter(agents), None)
+                if agents:
+                    agentcore_yaml.write_text(_yaml.safe_dump(state, sort_keys=False))
+                else:
+                    agentcore_yaml.unlink()
+                print(f"[OK] Removed stale '{RUNTIME_AGENT_NAME}' entry from .bedrock_agentcore.yaml")
+        except Exception as e:
+            # If we can't parse it, removing the file is safe — configure regenerates it.
+            print(f"Note: resetting .bedrock_agentcore.yaml ({type(e).__name__}: {e})")
+            agentcore_yaml.unlink()
 
     # Configure the runtime
     print("Configuring AgentCore Runtime...")
