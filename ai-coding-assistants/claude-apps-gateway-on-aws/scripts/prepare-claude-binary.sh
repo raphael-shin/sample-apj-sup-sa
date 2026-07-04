@@ -16,8 +16,11 @@ for tool in curl gpg node; do
 done
 
 workdir="$(mktemp -d)"
+GNUPGHOME="$(mktemp -d)"
+chmod 700 "$GNUPGHOME"
+export GNUPGHOME
 cleanup() {
-  rm -rf "$workdir"
+  rm -rf "$workdir" "$GNUPGHOME"
 }
 trap cleanup EXIT
 
@@ -27,6 +30,8 @@ curl -fsSL \
   -o "$workdir/manifest.json.sig" "$REPO/$VERSION/manifest.json.sig"
 
 echo "Importing Anthropic Claude Code release signing key..."
+# Import into an isolated keyring (GNUPGHOME above) so the verify step can only
+# trust the key we just downloaded, never a key already present on the host.
 curl -fsSL "$KEY_URL" | gpg --import >/dev/null
 fingerprint="$(gpg --with-colons --fingerprint security@anthropic.com | awk -F: '/^fpr:/ {print $10; exit}')"
 if [ "$fingerprint" != "$EXPECTED_FINGERPRINT" ]; then
@@ -35,7 +40,14 @@ if [ "$fingerprint" != "$EXPECTED_FINGERPRINT" ]; then
 fi
 
 echo "Verifying signed manifest..."
-gpg --verify "$workdir/manifest.json.sig" "$workdir/manifest.json"
+# Bind verification to the pinned fingerprint: assert VALIDSIG for the expected
+# key rather than accepting any good signature from the keyring.
+verify_status="$(gpg --status-fd 1 --verify "$workdir/manifest.json.sig" "$workdir/manifest.json")"
+if ! grep -q "^\[GNUPG:\] VALIDSIG .*$EXPECTED_FINGERPRINT" <<<"$verify_status"; then
+  echo "Manifest signature is not from the pinned signing key" >&2
+  echo "$verify_status" >&2
+  exit 1
+fi
 
 manifest_fields="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('$workdir/manifest.json','utf8')); const p=m.platforms['$PLATFORM']; if(!p) throw new Error('Unknown platform: $PLATFORM'); process.stdout.write(p.binary+'\n'+p.checksum);")"
 {
