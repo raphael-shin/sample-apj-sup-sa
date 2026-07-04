@@ -81,7 +81,7 @@ Full diagram, request path, network isolation, and the security-group matrix:
 | Cognito User Pool + client | OIDC identity provider (email sign-in, confidential client) |
 | ACM certificate | Gateway TLS cert, DNS-validated via the public hosted zone |
 | Secrets Manager (×3) | DB credentials, JWT secret, Cognito client secret |
-| Route 53 Private Hosted Zone | Private A-record for the gateway host → ALB |
+| Route 53 Private Hosted Zone | Zone scoped to the gateway FQDN only (alias → ALB), so the rest of the corporate domain still resolves publicly ([why](docs/dns.md#zone-scoping)) |
 | CloudWatch Logs + alarm | Gateway logs (1-month) + unhealthy-host alarm |
 
 Not created: CloudFront, public DNS for the gateway host, Client VPN / Direct Connect
@@ -132,7 +132,7 @@ cp cdk.context.json.example cdk.context.json
 | Context key | Meaning |
 |---|---|
 | `gatewayHost` | Private gateway FQDN (also the ACM cert subject) |
-| `hostedZoneName` | Route 53 zone name; a **public** zone of this name must exist for cert validation |
+| `hostedZoneName` | Parent zone name, used **only** for ACM cert validation; a **public** zone of this name must exist. Private DNS is scoped to `gatewayHost` |
 | `awsAccount` / `awsRegion` | Deployment target (needed for the hosted-zone lookup) |
 | `allowedClientCidrs` | CIDRs allowed to reach the internal ALB on 443 (VPN/corporate/devbox) |
 | `allowedEmailDomains` | Cognito ID-token email domains the gateway accepts |

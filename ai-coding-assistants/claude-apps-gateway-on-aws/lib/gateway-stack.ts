@@ -300,14 +300,18 @@ export class GatewayStack extends Stack {
       deregistrationDelay: Duration.seconds(30)
     });
 
+    // The private zone is scoped to the gateway FQDN itself (alias record at the
+    // zone apex), NOT to hostedZoneName. A VPC-associated private zone is
+    // authoritative for its entire zone name, so a zone at the domain apex would
+    // make every other host in that domain (SSO, internal git, ...) resolve to
+    // NXDOMAIN inside the VPC and for VPN clients using the VPC resolver.
     const privateHostedZone = new route53.PrivateHostedZone(this, "GatewayPrivateHostedZone", {
-      zoneName: config.hostedZoneName,
+      zoneName: config.gatewayHost,
       vpc
     });
 
     new route53.ARecord(this, "GatewayPrivateAliasRecord", {
       zone: privateHostedZone,
-      recordName: config.gatewayHost,
       target: route53.RecordTarget.fromAlias(new route53Targets.LoadBalancerTarget(loadBalancer))
     });
 

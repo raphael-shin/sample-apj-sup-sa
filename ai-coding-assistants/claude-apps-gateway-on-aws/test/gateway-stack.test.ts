@@ -91,9 +91,13 @@ describe("GatewayStack", () => {
     expect(serialized).toContain("foundation-model/anthropic.*");
   });
 
-  test("creates private DNS for the gateway hostname", () => {
+  test("scopes private DNS to the gateway FQDN so the parent domain is not shadowed", () => {
+    // The private zone must cover only the gateway hostname; a zone named
+    // hostedZoneName would shadow every other record in the corporate domain
+    // for VPC/VPN clients.
+    template.resourceCountIs("AWS::Route53::HostedZone", 1);
     template.hasResourceProperties("AWS::Route53::HostedZone", {
-      Name: `${testConfig.hostedZoneName}.`,
+      Name: `${testConfig.gatewayHost}.`,
       VPCs: Match.arrayWith([
         Match.objectLike({
           VPCRegion: "us-east-1"

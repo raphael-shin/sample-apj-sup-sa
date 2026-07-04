@@ -86,6 +86,10 @@ hop:
   `https://<host>/oauth/callback` callback.
 - **ACM certificate** — issued for `gatewayHost` and validated via DNS in the public
   hosted zone named `hostedZoneName`; the ALB uses it for TLS.
+- **Route 53 Private Hosted Zone** — named after the gateway FQDN itself (not
+  `hostedZoneName`) with the ALB alias at the zone apex, so only the gateway name is
+  overridden inside the VPC and the rest of the corporate domain keeps resolving
+  through public DNS ([why](dns.md#zone-scoping)).
 - **Secrets Manager** — DB credentials, a generated 48-char JWT secret, and the
   Cognito client secret; injected into the task as environment secrets.
 - **ECS Fargate** — cluster with Container Insights v2; task 512 CPU / 1024 MiB on

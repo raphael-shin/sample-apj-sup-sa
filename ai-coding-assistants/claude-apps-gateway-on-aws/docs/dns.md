@@ -5,6 +5,20 @@ IPs. This stack publishes the gateway A-record in a **Route 53 Private Hosted
 Zone**, which resolves only inside the VPC. The developer machine must therefore
 reach that private zone. Pick the option that matches how developers connect.
 
+## Zone scoping
+
+The private hosted zone is named after the **gateway FQDN itself**
+(`claude-gateway.corp.example.com`), with the ALB alias record at the zone apex —
+it is **not** a private copy of the parent domain (`corp.example.com`).
+
+This matters because a VPC-associated private hosted zone is authoritative for its
+entire zone name: queries that match the zone are answered only from that zone and
+never fall through to public DNS. If the private zone were created at the domain
+apex, every other host in the corporate domain (SSO, internal git, package mirrors,
+…) would return NXDOMAIN for VPC workloads and for VPN clients using the VPC
+resolver. Scoping the zone to the single FQDN overrides only the gateway name and
+leaves the rest of the domain resolving normally.
+
 ## Option A: Client VPN uses VPC DNS
 
 Use this when AWS Client VPN connects directly to the gateway VPC.
@@ -29,13 +43,14 @@ ZTNA.
 ```text
 Developer laptop
   -> corporate DNS
-  -> conditional forwarder for corp.example.com
+  -> conditional forwarder for claude-gateway.corp.example.com
   -> Route 53 Resolver inbound endpoint
   -> Route 53 Private Hosted Zone
 ```
 
 Create a Route 53 Resolver inbound endpoint in the VPC, then configure corporate
-DNS to forward `corp.example.com` to the inbound endpoint IP addresses. The inbound
+DNS to forward `claude-gateway.corp.example.com` (the gateway FQDN — see
+[Zone scoping](#zone-scoping)) to the inbound endpoint IP addresses. The inbound
 endpoint IPs are private, so the corporate network must already be connected to the
 VPC through VPN or Direct Connect.
 
